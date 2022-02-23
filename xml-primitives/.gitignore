@@ -23,6 +23,7 @@
 *.class
 *.jar
 *.swp
+*.iml
 *~
 /checkouts
 /classes
