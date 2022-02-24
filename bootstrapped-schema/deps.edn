@@ -9,8 +9,6 @@
          org.glassfish.jaxb/jaxb-runtime             {:mvn/version "3.0.1"}
          io.github.dunnage.sitoa/xml-primitives      {:local/root "../xml-primitives"
                                                       :deps/root  "xml-primitives"}
-         io.github.dunnage.sitoa/bootstrapped-schema {:local/root "../bootstrapped-schema"
-                                                      :deps/root  "bootstrapped-schema"}
          }
  :aliases
  {:build {:deps       {io.github.seancorfield/build-clj
