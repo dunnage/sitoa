@@ -4,10 +4,11 @@
             [malli.util :as mu]
             [dunnage.sitoa.xml-primitives :as xml-primitives]
             [clojure.tools.reader.edn :as edn]
-            [clojure.pprint :as pp])
+            [clojure.pprint :as pp]
+            [fipp.edn :refer [pprint] :rename {pprint fipp}])
   (:import (com.sun.xml.xsom.parser XSOMParser)
            (javax.xml.parsers SAXParserFactory)
-           (com.sun.xml.xsom XSRestrictionSimpleType XSSimpleType XmlString XSComplexType XSTerm XSParticle XSModelGroup XSUnionSimpleType XSListSimpleType XSComponent XSDeclaration XSModelGroupDecl XSWildcard XSWildcard$Any XSType ForeignAttributes XSAttributeUse XSFacet XSSchemaSet XSElementDecl)
+           (com.sun.xml.xsom XSRestrictionSimpleType XSSimpleType XmlString XSComplexType XSTerm XSParticle XSModelGroup XSUnionSimpleType XSListSimpleType XSComponent XSDeclaration XSModelGroupDecl XSWildcard XSWildcard$Any XSType ForeignAttributes XSAttributeUse XSFacet XSSchemaSet XSElementDecl XSVariety)
            (org.xml.sax ErrorHandler SAXParseException)
            (java.net URL)
            (java.time LocalDate LocalDateTime)
@@ -388,23 +389,43 @@
   (-mtype [x context]
     (let [prim-keyword (some->> x .getPrimitiveType .getName (keyword "org.w3.www.2001.XMLSchema"))
           base-type    (some-> x .getSimpleBaseType)]
-      ;(when (= (get-primitive-type x) "length_range_Type")
-      ;  (prn (type x))
-      ;  (prn (bean x)))
-      (if (.isPrimitive x)
-        prim-keyword
-        (case (get-primitive-type x)
-          "decimal" prim-keyword                            ;java.math.BigDecimal
-          "date", prim-keyword                              ;javax.xml.datatype.XMLGregorianCalendar
-          "dateTime", prim-keyword                          ;javax.xml.datatype.XMLGregorianCalendar
-          "string", (malli-string-primitive (.getDeclaredFacets x))
-          "IDREFS" :string
-          "ENTITIES" :string
-          "NMTOKENS" :string
-          nil (do                                           ;(prn (bean x))
-                (-mtype base-type context))
-          ;:nil
-          ))))
+      #_(prn (.getVariety x))
+      #_(when (= (get-primitive-type x) "length_range_Type")
+        (prn (type x))
+        (pp/pprint (bean x)))
+      (case (.toString (.getVariety x))
+        "atomic"
+        (if (.isPrimitive x)
+          prim-keyword
+          (case (get-primitive-type x)
+            "decimal" prim-keyword                          ;java.math.BigDecimal
+            ;"date", prim-keyword                            ;javax.xml.datatype.XMLGregorianCalendar
+            ;"dateTime", prim-keyword                        ;javax.xml.datatype.XMLGregorianCalendar
+            "string", (malli-string-primitive (.getDeclaredFacets x))
+            ;"IDREFS" :string
+            ;"ENTITIES" :string
+            ;"NMTOKENS" :string
+            #_#_nil (do                                         ;(prn (bean x))
+                  (-mtype base-type context))))
+        "list"
+        (let [ct (.getContentType x)]
+          (if (identical? ct x)
+            (do (prn (.getName x) (.getDeclaredFacets x)) #_(pp/pprint (bean x))
+              :any)
+            [:sequence {:primitive true}
+             (if (anon-type? ct)
+               (-mtype ct (dissoc context :sequence))
+               (-seq-ref ct (dissoc context :sequence)))]))
+        "union"
+        (let []
+          [:any {:name (.getName x)}]
+          #_(if (identical? ct x)
+            (do (prn (.getName x) (.getDeclaredFacets x)) #_(pp/pprint (bean x))
+                )
+            [:sequence {:primitive true}
+             (if (anon-type? ct)
+               (-mtype ct (dissoc context :sequence))
+               (-seq-ref ct (dissoc context :sequence)))])))))
   (-seq-possible? [x context]
     false)
   (-seq-ref [x context]
@@ -478,4 +499,8 @@
   (with-open [w (io/writer filename)]
     (binding [*out* w]
       (pp/pprint (-> schema m/properties :registry)))))
+
+(defn serialize-schema [schema filename]
+  (with-open [w (io/writer filename)]
+    (fipp (m/form schema) {:writer w})))
 
