@@ -3,7 +3,8 @@
             [malli.core :as m]
             [malli.util :as mu]
             [dunnage.sitoa.xml-primitives :as xml-primitives]
-            [clojure.tools.reader.edn :as edn])
+            [clojure.tools.reader.edn :as edn]
+            [clojure.pprint :as pp])
   (:import (com.sun.xml.xsom.parser XSOMParser)
            (javax.xml.parsers SAXParserFactory)
            (com.sun.xml.xsom XSRestrictionSimpleType XSSimpleType XmlString XSComplexType XSTerm XSParticle XSModelGroup XSUnionSimpleType XSListSimpleType XSComponent XSDeclaration XSModelGroupDecl XSWildcard XSWildcard$Any XSType ForeignAttributes XSAttributeUse XSFacet XSSchemaSet XSElementDecl)
@@ -475,5 +476,6 @@
 
 (defn serialize-registry [schema filename]
   (with-open [w (io/writer filename)]
-    (pr-on (-> schema m/properties :registry) w)))
+    (binding [*out* w]
+      (pp/pprint (-> schema m/properties :registry)))))
 
