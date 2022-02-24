@@ -241,3 +241,6 @@
                       malli-registry}
              start-type]
             external-registry))
+
+(defn update-start-type [schema start-type]
+  (make-schema (-> schema m/properties :registry) start-type))
