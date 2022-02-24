@@ -1,19 +1,22 @@
 {:paths ["src" "resources"]
- :deps  {org.clojure/clojure                   {:mvn/version "1.10.3"}
-         metosin/malli                         {:mvn/version "0.7.5"}
-         com.gfredericks/test.chuck            {:mvn/version "0.2.13"}
+ :deps  {org.clojure/clojure                         {:mvn/version "1.10.3"}
+         metosin/malli                               {:mvn/version "0.8.3"}
+         com.gfredericks/test.chuck                  {:mvn/version "0.2.13"}
          ;; https://mvnrepository.com/artifact/org.glassfish.jaxb/xsom
-         org.glassfish.jaxb/xsom               {:mvn/version "3.0.1"}
+         org.glassfish.jaxb/xsom                     {:mvn/version "3.0.1"}
          ;; https://mvnrepository.com/artifact/jakarta.xml.bind/jakarta.xml.bind-api
-         jakarta.xml.bind/jakarta.xml.bind-api {:mvn/version "3.0.1"}
-         org.glassfish.jaxb/jaxb-runtime       {:mvn/version "3.0.1"}
-         io.github.dunnage/sitoa               {:local/root "../xml-primitives"}
+         jakarta.xml.bind/jakarta.xml.bind-api       {:mvn/version "3.0.1"}
+         org.glassfish.jaxb/jaxb-runtime             {:mvn/version "3.0.1"}
+         io.github.dunnage.sitoa/xml-primitives      {:local/root "../xml-primitives"
+                                                      :deps/root  "xml-primitives"}
+         io.github.dunnage.sitoa/bootstrapped-schema {:local/root "../bootstrapped-schema"
+                                                      :deps/root  "bootstrapped-schema"}
          }
  :aliases
- {:build   {:deps       {io.github.seancorfield/build-clj
-                         {:git/tag "v0.6.3" :git/sha "9b8e09b"}}
-            :ns-default build}
-  :test    {:extra-paths ["test"]
-            :extra-deps  {org.clojure/test.check {:mvn/version "1.1.1"}
-                          io.github.cognitect-labs/test-runner
-                          {:git/tag "v0.5.0" :git/sha "48c3c67"}}}}}
+ {:build {:deps       {io.github.seancorfield/build-clj
+                       {:git/tag "v0.6.3" :git/sha "9b8e09b"}}
+          :ns-default build}
+  :test  {:extra-paths ["test"]
+          :extra-deps  {org.clojure/test.check {:mvn/version "1.1.1"}
+                        io.github.cognitect-labs/test-runner
+                        {:git/tag "v0.5.0" :git/sha "48c3c67"}}}}}
