@@ -1,7 +1,8 @@
 (ns dunnage.sitoa.xml-primitives
   (:require [malli.core :as m]
             [clojure.test.check.generators :as gen]
-            [malli.transform :as mt])
+            [malli.transform :as mt]
+            [malli.util :as mu])
   (:import (java.time LocalDateTime LocalDate LocalTime ZonedDateTime ZoneId)))
 
 (defn -string->localDateTime [x]
@@ -137,6 +138,10 @@
 
    })
 
+(def external-registry {:registry (merge
+                                    (m/default-schemas)
+                                    (mu/schemas)
+                                    xmlschema-custom)})
 (def xmlschema-registry
   {
    :org.w3.www.2001.XMLSchema/QName                        :string ;javax.xml.namespace.QName
@@ -230,3 +235,9 @@
                                                                       :org.w3.www.2001.XMLSchema/ENTITY
                                                                       :org.w3.www.2001.XMLSchema/untypedAtomic]
    })
+
+(defn make-schema [malli-registry start-type ]
+  (m/schema [:schema {:registry
+                      malli-registry}
+             start-type]
+            external-registry))

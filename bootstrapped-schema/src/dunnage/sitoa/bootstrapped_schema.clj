@@ -432,52 +432,46 @@
     (.parse parser f)
     (.getResult parser)))
 
-(defn process-schema-elements [{default-ns :default-ns :as context} schema]
-  (into [] (iterator-seq (.iterateElementDecls schema))))
+(defn xsd->top-type [{default-ns :default-ns :as context} schema]
+  (into [:or]
+        (map (partial handle-element-decl context))
+        (iterator-seq (.iterateElementDecls schema))))
 
-(defn xds->registry [{default-ns :default-ns :as context} f]
-  (let [schema (parse-xsd f)
-        seq-context (assoc context :sequence true)]
-    #_(process-schema-elements context schema)
-    (conj [:schema {:registry
-                    (-> xml-primitives/xmlschema-registry
-                        (into
-                          (comp
-                            (remove (fn [^XSType x]
-                                      (some-> x .asSimpleType .isPrimitive)))
-                            (filter #(-seq-possible? % nil))
-                            (map #(vector (->nskw-seq % default-ns) (-mtype % seq-context))))
-                          (iterator-seq (.iterateTypes schema)))
-                        (into
-                          (comp
-                            (remove (fn [^XSType x]
-                                      (some-> x .asSimpleType .isPrimitive)))
-                            (map #(vector (->nskw % default-ns) (-mtype % context))))
-                          (iterator-seq (.iterateTypes schema)))
+(defn xsd->registry [{default-ns :default-ns :as context} schema]
+  (let [seq-context (assoc context :sequence true)]
+    (-> xml-primitives/xmlschema-registry
+        (into
+          (comp
+            (remove (fn [^XSType x]
+                      (some-> x .asSimpleType .isPrimitive)))
+            (filter #(-seq-possible? % nil))
+            (map #(vector (->nskw-seq % default-ns) (-mtype % seq-context))))
+          (iterator-seq (.iterateTypes schema)))
+        (into
+          (comp
+            (remove (fn [^XSType x]
+                      (some-> x .asSimpleType .isPrimitive)))
+            (map #(vector (->nskw % default-ns) (-mtype % context))))
+          (iterator-seq (.iterateTypes schema)))
 
-                        (into
-                          (comp
-                            (filter (fn [^XSModelGroupDecl x]
-                                      (.isGlobal x)))
-                            (map #(vector (->nskw-seq % default-ns) (-mtype % seq-context))))
-                          (iterator-seq (.iterateModelGroupDecls schema)))
-                        (into
-                          (comp
-                            (filter (fn [^XSModelGroupDecl x]
-                                      (.isGlobal x)))
-                            (map #(vector (->nskw % default-ns) (-mtype % context))))
-                          (iterator-seq (.iterateModelGroupDecls schema))))}]
-
-          (into [:or]
-                (map (partial handle-element-decl context))
-                (iterator-seq (.iterateElementDecls schema))))))
+        (into
+          (comp
+            (filter (fn [^XSModelGroupDecl x]
+                      (.isGlobal x)))
+            (map #(vector (->nskw-seq % default-ns) (-mtype % seq-context))))
+          (iterator-seq (.iterateModelGroupDecls schema)))
+        (into
+          (comp
+            (filter (fn [^XSModelGroupDecl x]
+                      (.isGlobal x)))
+            (map #(vector (->nskw % default-ns) (-mtype % context))))
+          (iterator-seq (.iterateModelGroupDecls schema))))))
 
 (defn xsd->schema [context f]
-  (m/schema (xds->registry context f)
-            {:registry (merge
-                         (m/default-schemas)
-                         (mu/schemas)
-                         xml-primitives/xmlschema-custom)}))
+  (let [schema (parse-xsd f)
+        registry (xsd->registry context schema)
+        top-type (xsd->top-type context schema)]
+    (xml-primitives/make-schema registry top-type)))
 
 (defn serialize-registry [schema filename]
   (with-open [w (io/writer filename)]
