@@ -1,6 +1,6 @@
 {:paths ["src" "resources"]
  :deps {org.clojure/clojure {:mvn/version "1.10.3"}
-        metosin/malli                         {:mvn/version "0.7.5"}
+        metosin/malli                         {:mvn/version "0.8.3"}
         com.gfredericks/test.chuck            {:mvn/version "0.2.13"}}
  :aliases
  {:build {:deps {io.github.seancorfield/build-clj
