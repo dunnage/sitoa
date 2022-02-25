@@ -2,11 +2,25 @@
   (:require [clojure.test :refer :all]
             [clojure.pprint :as pprint]
             [dunnage.sitoa.bootstrapped-schema :as schema]
-            [dunnage.sitoa.xml-primitives :as xml-primitives ]
+            [dunnage.sitoa.xml-primitives :as xml-primitives]
             [malli.util :as mu]
             [malli.core :as m]
-            [dunnage.sitoa.parser :refer :all]))
+            [dunnage.sitoa.parser :refer :all]
+            [clojure.java.io :as io]
+            [clojure.tools.reader.edn :as edn])
+  (:import (java.io PushbackReader)))
 
+(def xsd-schema (m/schema (with-open [r (PushbackReader. (io/reader (io/resource "xsd-schema.edn")))]
+                            (edn/read r))
+                          xml-primitives/external-registry))
+
+(def xsd-parser (xml-parser xsd-schema))
+
+(def fop-schema (m/schema (with-open [r (PushbackReader. (io/reader (io/resource "fop-schema.edn")))]
+                            (edn/read r))
+                          xml-primitives/external-registry))
+
+(def fop-parser (xml-parser fop-schema))
 (comment
   (def message-schema (m/schema (schema/xds->registry {:default-ns "script"} (io/resource "V20170715/transport.xsd"))
                                 {:registry (merge
@@ -52,5 +66,15 @@
   (def parsed (with-open [s (source (io/resource "XMLSchema.xsd"))]
                 (let [r ^XMLStreamReader (make-stream-reader {} s)]
                   (xsd-parser r))))
+
+  (def fopparsed (with-open [s (source (io/resource "fopsample1.xml"))]
+                   (let [r ^XMLStreamReader (make-stream-reader {} s)]
+                     (fop-parser r))))
+  (def fopparsed (with-open [s (source (io/resource "table-borders.fo"))]
+                   (let [r ^XMLStreamReader (make-stream-reader {} s)]
+                     (fop-parser r))))
+  (def fopparsed (with-open [s (source (io/resource "table-borders-max-ram.fo"))]
+                   (let [r ^XMLStreamReader (make-stream-reader {} s)]
+                     (fop-parser r))))
   (select-keys (m/explain message-schema parsed) [:value :errors])
   )
