@@ -335,6 +335,15 @@
     (f data w)
     (.writeEndDocument w)
     ))
+(defn string-writer [f]
+  (fn [data]
+    (with-open [s (StringWriter.)]
+      (with-open [w ^XMLStreamWriter (make-stream-writer {} s)]
+        (.writeStartDocument w)
+        (f data w)
+        (.writeEndDocument w))
+      (str s))))
+
 (defn xml-unparser
   "Returns an pure xml-unparser function of type `x -> boolean` for a given Schema.
    Caches the result for [[Cached]] Schemas with key `:xml-unparser`."
@@ -342,6 +351,14 @@
    (xml-unparser ?schema nil))
   ([?schema options]
    (document-writer (-xml-unparser (m/schema ?schema options)))
+
+   #_(m/-cached (m/schema ?schema options) :xml-unparser -xml-unparser)))
+
+(defn xml-string-unparser
+  ([?schema]
+   (xml-string-unparser ?schema nil))
+  ([?schema options]
+   (string-writer (-xml-unparser (m/schema ?schema options)))
 
    #_(m/-cached (m/schema ?schema options) :xml-unparser -xml-unparser)))
 
