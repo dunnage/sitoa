@@ -399,8 +399,8 @@
           prim-keyword
           (case (get-primitive-type x)
             "decimal" prim-keyword                          ;java.math.BigDecimal
-            ;"date", prim-keyword                            ;javax.xml.datatype.XMLGregorianCalendar
-            ;"dateTime", prim-keyword                        ;javax.xml.datatype.XMLGregorianCalendar
+            "date", prim-keyword                            ;javax.xml.datatype.XMLGregorianCalendar
+            "dateTime", prim-keyword                        ;javax.xml.datatype.XMLGregorianCalendar
             "string", (malli-string-primitive (.getDeclaredFacets x))
             ;"IDREFS" :string
             ;"ENTITIES" :string
