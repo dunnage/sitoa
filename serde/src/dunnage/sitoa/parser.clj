@@ -648,7 +648,12 @@
     :or  (-or-parser x)
     :and (-and-parser x)
     :cat (-cat-parser x)
-    :sequential (-sequential-parser "cat" x)
+    :sequential (let [tuplechild (-> x m/children first)
+                      t (m/type tuplechild)
+                      key (-> tuplechild m/children first)
+                      keyvalue (-> key m/children first)]
+                  (assert (= t :tuple))
+                  (-sequential-parser keyvalue x))
     :boolean (boolean-parser x)
     :? (-regex-parser x)
     :* (-regex-parser x)
