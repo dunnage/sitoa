@@ -50,6 +50,10 @@
       (.setProperty fac prop v))
     fac))
 
+(defn get-tag-kw [^XMLStreamReader r]
+  (let [tag (.getLocalName r)]
+    (keyword tag)))
+
 (defn safe-next-tag [^XMLStreamReader r]
   (when (.hasNext r)
     (loop [tok (.next r)]
@@ -64,6 +68,28 @@
         )))
   #_(when-not (= (.getEventType r) 8)
     (.nextTag r)))
+
+(defn safe-exit-tag [tag]
+  (fn [^XMLStreamReader r]
+    (let [tok (.getEventType r)]
+      ;(prn tok)
+      (case tok
+        (1 8)                                             ;START_ELEMENT
+        tok
+        (2)
+        (if (= tag (get-tag-kw r))
+          (if (.hasNext r)
+            (do (.next r)
+                (.getEventType r)
+                (recur r))
+            tok
+            #_(recur r))
+          tok)
+        (3 4 5 6 7 11)                                      ;COMMENT
+        (when (.hasNext r)
+          (.next r)
+          (recur r))))))
+
 (defn ensure-safe-next-tag [^XMLStreamReader r]
   (case (.getEventType r)
     (1 8)                                                 ;START_ELEMENT
@@ -148,28 +174,28 @@
 (defn string-parser [x]
   (fn [^XMLStreamReader r]
     (let [txt (.getElementText r)]
-      (safe-next-tag r)
+      ;(safe-exit-tag r)
       ;(prn :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
       txt)))
 
 (defn local-date-parser [x]
   (fn [^XMLStreamReader r]
     (let [txt (.getElementText r)]
-      (safe-next-tag r)
+      ;(safe-exit-tag r)
       ;(prn :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
       (LocalDate/parse txt))))
 
 (defn local-time-parser [x]
   (fn [^XMLStreamReader r]
     (let [txt (.getElementText r)]
-      (safe-next-tag r)
+      ;(safe-exit-tag r)
       ;(prn :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
       (LocalTime/parse txt))))
 
 (defn local-date-time-parser [x]
   (fn [^XMLStreamReader r]
     (let [txt (.getElementText r)]
-      (safe-next-tag r)
+      ;(safe-exit-tag r)
       ;(prn :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
       (try
         (LocalDateTime/parse txt)
@@ -179,20 +205,21 @@
 (defn zoned-date-time-parser [x]
   (fn [^XMLStreamReader r]
     (let [txt (.getElementText r)]
-      (safe-next-tag r)
+      ;(safe-exit-tag r)
       ;(prn :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
       (ZonedDateTime/parse txt))))
 
 (defn decimal-parser [x]
   (fn [^XMLStreamReader r]
     (let [txt (.getElementText r)]
-      (safe-next-tag r)
+      ;(safe-exit-tag r)
       ;(prn :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
       (BigDecimal. txt))))
 
 (defn boolean-parser [x]
   (fn [^XMLStreamReader r]
     (let [txt (.getElementText r)]
+      ;(safe-exit-tag r)
        (Boolean/parseBoolean txt))))
 
 (defn attribute-reducible
@@ -215,9 +242,7 @@
 (defn ap [x]
   x)
 
-(defn get-tag-kw [^XMLStreamReader r]
-  (let [tag (.getLocalName r)]
-    (keyword tag)))
+
 
 (defn get-ns-tag-kw [^XMLStreamReader r]
   (let [tag (.getLocalName r)
@@ -235,14 +260,19 @@
                acc))
       ([acc [nexttagk tag-parser tag-descrim]]
        (loop [tok (.getEventType r) val acc]
-         (prn :map (debug-element r) tags)
+         ; (prn :map (debug-element r) tags)
          (case tok
            1                                                ;START_ELEMENT
            (let [tagk (get-tag-kw r)]
              (if (= nexttagk tagk)
-               (let [val (assoc! val tagk (tag-parser r))]
-                 (recur (.getEventType r) val))
-               (do (prn :leave tagk)
+               (let [_ (assert (not (get val tagk)))
+                     val (assoc! val tagk (tag-parser r))
+                     exiter (safe-exit-tag nexttagk)]
+                 (exiter r)
+                 val
+                 ;(recur (.getEventType r) val)
+                 )
+               (do (prn :leave-start-next tagk)
                    val)))
 
            2                                                ;END_ELEMENT
@@ -464,7 +494,7 @@
             (prn :or tagk discriminator (discriminator tagk))
             (if (discriminator tagk)
               (let [v (parser r)]
-                (prn :or tagk v :before-return(debug-element r))
+                (prn :or tagk v :before-return (debug-element r))
                 ;(skip-closing-and-charactors r)
                 (reduced v))
               acc)))
@@ -520,6 +550,7 @@
 
       (reduce
         (fn [acc [discriminator [inline-data? parser]]]
+          ;(prn :cat :pre (debug-element r))
           (let [tagk (get-tag-kw r)]
             (prn :cat tagk discriminator inline-data? (discriminator tagk) (debug-element r))
             (if (discriminator tagk)
@@ -547,9 +578,13 @@
             _    (assert (= schema-tag tagk) (debug-element r))
             _    (prn :tuple schema-tag tagk :parse (debug-element r))
             toreturn [tagk (subparser r)]]
+        ((safe-exit-tag tagk) r)
         (prn :tuple toreturn :before-return (debug-element r))
         ;(skip-closing-and-charactors r)
-        (when (= schema-tag (get-tag-kw r))
+        ;(assert (= schema-tag (get-tag-kw r)) (pr-str (debug-element r)))
+
+        ;(.next r)
+        #_(when (= schema-tag (get-tag-kw r))
           (safe-next-tag r))
         toreturn
         ))))
