@@ -345,8 +345,10 @@
       (str s))))
 
 (defn xml-unparser
-  "Returns an pure xml-unparser function of type `x -> boolean` for a given Schema.
-   Caches the result for [[Cached]] Schemas with key `:xml-unparser`."
+  "takes malli schema and options
+  Returns a document-writer a function that takes edn-data and a XMLStreamWriter
+   when the document-writer is called it outputs the xml to the writer according to the
+   directions in the schema."
   ([?schema]
    (xml-unparser ?schema nil))
   ([?schema options]
@@ -355,6 +357,8 @@
    #_(m/-cached (m/schema ?schema options) :xml-unparser -xml-unparser)))
 
 (defn xml-string-unparser
+  "takes malli schema and options
+  Returns a function that takes edn-data and returns a string."
   ([?schema]
    (xml-string-unparser ?schema nil))
   ([?schema options]
