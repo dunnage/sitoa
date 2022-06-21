@@ -82,7 +82,7 @@
                                         ;:json-schema/format  "int64"
                                         ;:json-schema/minimum 6
                                         :gen/gen       (gen/let [year ^Long (gen/large-integer* {:min 0 :max 10000})
-                                                                 month ^Long (gen/large-integer* {:min 1 :max 13})
+                                                                 month ^Long (gen/large-integer* {:min 1 :max 12})
                                                                  day ^Long (gen/large-integer* {:min 1 :max 29})]
                                                                 (LocalDate/of year month day))
                                         }})
@@ -96,7 +96,7 @@
                                         ;:json-schema/format  "int64"
                                         ;:json-schema/minimum 6
                                         :gen/gen       (gen/let [year ^Long (gen/large-integer* {:min 0 :max 10000})
-                                                                 month ^Long (gen/large-integer* {:min 1 :max 13})
+                                                                 month ^Long (gen/large-integer* {:min 1 :max 12})
                                                                  day ^Long (gen/large-integer* {:min 1 :max 29})
                                                                  hour ^Long (gen/large-integer* {:min 0 :max 23})
                                                                  minute ^Long (gen/large-integer* {:min 0 :max 59})
@@ -113,7 +113,7 @@
                                         ;:json-schema/format  "int64"
                                         ;:json-schema/minimum 6
                                         :gen/gen       (gen/let [year ^Long (gen/large-integer* {:min 0 :max 10000})
-                                                                 month ^Long (gen/large-integer* {:min 1 :max 13})
+                                                                 month ^Long (gen/large-integer* {:min 1 :max 12})
                                                                  day ^Long (gen/large-integer* {:min 1 :max 29})
                                                                  hour ^Long (gen/large-integer* {:min 0 :max 23})
                                                                  minute ^Long (gen/large-integer* {:min 0 :max 59})
