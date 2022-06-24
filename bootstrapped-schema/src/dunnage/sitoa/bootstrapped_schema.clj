@@ -132,7 +132,10 @@
                  (= 0 min-occurs)
                  (assoc :optional true))
          (if (or (> max-occurs 1) (= max-occurs -1))
-           [:sequential ty-ref]
+           [:sequential (if (= 0 min-occurs)
+                          {:min 1}
+                          {:min min-occurs})
+            ty-ref]
            ty-ref)])
       )))
 
@@ -498,7 +501,18 @@
 (defn serialize-registry [schema filename]
   (with-open [w (io/writer filename)]
     (binding [*out* w]
-      (pp/pprint (-> schema m/properties :registry)))))
+      (.write w "{")
+      (reduce-kv
+        (fn [acc k v]
+          (.write w (pr-str k))
+          (.write w "\n")
+          (fipp (m/form v) {:writer w})
+          ;(.write w "\n")
+          )
+        w
+        (-> schema m/properties :registry))
+      (.write w "}")
+      )))
 
 (defn serialize-schema [schema filename]
   (with-open [w (io/writer filename)]
