@@ -27,14 +27,36 @@
 (defn get-primitive-type [^XSSimpleType x]
   (or (some-> x .getPrimitiveType .getName) (.getName x) #_"no-primative"))
 
+(defn uri->ns [^String x]
+  (let [url
+        ^URL (io/as-url x)]
+    (-> []
+        (into (reverse (clojure.string/split (.getHost url) #"\.")))
+        (into (remove empty?) (clojure.string/split (.getPath url) #"\/"))
+        (->> (clojure.string/join ".")))))
+
+(defn not-empty-string [^String x]
+  (when-not (.isEmpty x)
+    x))
+
 (defn unwrap-and [x if-empty]
   (case (count x)
     1 if-empty
     2 (nth x 1)
     x))
-(def name-regex #"^\d{1,3}|\d(([ ,]?\d{3})*([.,]\d{2}+)?$)")
-(defn malli-string-primitive [facets]
-  (let [{:keys [enum pattern] :as f}
+
+(def name-regex "^\\d{1,3}|\\d(([ ,]?\\d{3})*([.,]\\d{2}+)?$)")
+
+(defn malli-string-primitive [prim {default-ns :default-ns :as context}]
+  (let [facets (.getDeclaredFacets prim)
+        baset (.getBaseType prim)
+        base   (keyword (or (some-> (.getTargetNamespace baset)
+                                    not-empty-string
+                                    uri->ns)
+                            default-ns) (.getName baset))
+        base  (when (not= :org.w3.www.2001.XMLSchema/string base)
+                base)
+        {:keys [enum pattern] :as f}
         (reduce
           (fn
             [acc ^XSFacet facet]
@@ -54,7 +76,7 @@
                                                    (case re
                                                      "\\i\\c*" name-regex
                                                      "[\\i-[:]][\\c-[:]]*" name-regex
-                                                     (re-pattern re)))
+                                                     re))
                                                  ]))
                 "whiteSpace" acc)))                         ;"preserve replace collapse))
           {}
@@ -66,20 +88,10 @@
                 enum
                 (conj enum)
                 pattern
-                (conj pattern))
+                (conj pattern)
+                base
+                (conj base))
         (unwrap-and :string))))
-
-(defn uri->ns [^String x]
-  (let [url
-        ^URL (io/as-url x)]
-    (-> []
-        (into (reverse (clojure.string/split (.getHost url) #"\.")))
-        (into (remove empty?) (clojure.string/split (.getPath url) #"\/"))
-        (->> (clojure.string/join ".")))))
-
-(defn not-empty-string [^String x]
-  (when-not (.isEmpty x)
-    x))
 
 (defn ->nskw [^XSDeclaration x default-ns]
   (when-some [name (.getName x)]
@@ -404,7 +416,7 @@
             "decimal" prim-keyword                          ;java.math.BigDecimal
             "date", prim-keyword                            ;javax.xml.datatype.XMLGregorianCalendar
             "dateTime", prim-keyword                        ;javax.xml.datatype.XMLGregorianCalendar
-            "string", (malli-string-primitive (.getDeclaredFacets x))
+            "string", (malli-string-primitive x context)
             ;"IDREFS" :string
             ;"ENTITIES" :string
             ;"NMTOKENS" :string
