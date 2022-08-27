@@ -1,19 +1,19 @@
 {:paths ["src" "resources"]
- :deps  {org.clojure/clojure                         {:mvn/version "1.10.3"}
-         metosin/malli                               {:mvn/version "0.8.3"}
-         com.gfredericks/test.chuck                  {:mvn/version "0.2.13"}
+ :deps  {org.clojure/clojure                    {:mvn/version "1.11.1"}
+         metosin/malli                          {:mvn/version "0.8.9"}
+         com.gfredericks/test.chuck             {:mvn/version "0.2.13"}
          ;; https://mvnrepository.com/artifact/org.glassfish.jaxb/xsom
-         org.glassfish.jaxb/xsom                     {:mvn/version "3.0.1"}
+         org.glassfish.jaxb/xsom                {:mvn/version "4.0.0"}
          ;; https://mvnrepository.com/artifact/jakarta.xml.bind/jakarta.xml.bind-api
-         jakarta.xml.bind/jakarta.xml.bind-api       {:mvn/version "3.0.1"}
-         org.glassfish.jaxb/jaxb-runtime             {:mvn/version "3.0.1"}
-         io.github.dunnage.sitoa/xml-primitives      {:local/root "../xml-primitives"
-                                                      :deps/root  "xml-primitives"}
+         jakarta.xml.bind/jakarta.xml.bind-api  {:mvn/version "4.0.0"}
+         org.glassfish.jaxb/jaxb-runtime        {:mvn/version "4.0.0"}
+         io.github.dunnage.sitoa/xml-primitives {:local/root "../xml-primitives"
+                                                 :deps/root  "xml-primitives"}
          }
  :aliases
  {:build {:deps       {io.github.seancorfield/build-clj
                        {:git/tag "v0.6.3" :git/sha "9b8e09b"}}
           :ns-default build}
-  :dev    {:extra-paths ["dev-resources"]}
+  :dev   {:extra-paths ["dev-resources"]}
   :test  {:extra-paths ["test"]
           :extra-deps  {org.clojure/test.check {:mvn/version "1.1.1"}}}}}
