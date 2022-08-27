@@ -1,15 +1,15 @@
 {:paths ["src" "resources"]
- :deps {org.clojure/clojure {:mvn/version "1.10.3"}
-        metosin/malli                         {:mvn/version "0.8.3"}
-        com.gfredericks/test.chuck            {:mvn/version "0.2.13"}
-        io.github.dunnage.sitoa/bootstrapped-schema {:local/root "../bootstrapped-schema"
-                                                     :deps/root  "bootstrapped-schema"}
-        io.github.dunnage.sitoa/xml-primitives      {:local/root "../xml-primitives"
-                                                     :deps/root  "xml-primitives"}}
+ :deps  {org.clojure/clojure                         {:mvn/version "1.11.1"}
+         metosin/malli                               {:mvn/version "0.8.9"}
+         com.gfredericks/test.chuck                  {:mvn/version "0.2.13"}
+         io.github.dunnage.sitoa/bootstrapped-schema {:local/root "../bootstrapped-schema"
+                                                      :deps/root  "bootstrapped-schema"}
+         io.github.dunnage.sitoa/xml-primitives      {:local/root "../xml-primitives"
+                                                      :deps/root  "xml-primitives"}}
  :aliases
- {:build {:deps {io.github.seancorfield/build-clj
-                 {:git/tag "v0.6.3" :git/sha "9b8e09b"}}
+ {:build {:deps       {io.github.seancorfield/build-clj
+                       {:git/tag "v0.6.3" :git/sha "9b8e09b"}}
           :ns-default build}
-  :dev    {:extra-paths ["dev-resources"]}
-  :test {:extra-paths ["test"]
-         :extra-deps {org.clojure/test.check {:mvn/version "1.1.1"}}}}}
+  :dev   {:extra-paths ["dev-resources"]}
+  :test  {:extra-paths ["test"]
+          :extra-deps  {org.clojure/test.check {:mvn/version "1.1.1"}}}}}
