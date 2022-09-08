@@ -138,7 +138,7 @@
                    (-mtype ty context)
                    (-seq-ref ty context))]
       (assert x)
-      (when true #_(not= (m/children ty-ref) [(keyword default-ns "Extension")])
+      (when (not= max-occurs 0) #_(not= (m/children ty-ref) [(keyword default-ns "Extension")])
         [(->kw x)
          (cond-> {}
                  (= 0 min-occurs)
