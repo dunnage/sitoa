@@ -437,6 +437,8 @@
     :or (do                                                 ;(prn x)
           (-alt-discriminator x))
     :cat (-cat-discriminator x)
+    :and (let [f (first (m/children x))]
+           (make-tag-discriminator f))
     :any nil))
 
 (defn skip-seqex [x]
