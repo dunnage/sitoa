@@ -268,14 +268,16 @@
 (defn cannoical-unparser [x]
   (let [children (m/children x)
         sub-unparser
-        (reduce
-          (fn [acc subschema]
-            (case (m/type subschema)
-              (:string) (reduced (-xml-unparser subschema))
-              acc))
-          nil
-          children)]
-    (assert sub-unparser)
+        (or (reduce
+              (fn [acc subschema]
+                (case (m/type subschema)
+                  (:string :enum :re) (reduced (-xml-unparser subschema))
+                  acc))
+              nil
+              children)
+            ;dereference types
+            )]
+    (assert sub-unparser (pr-str x))
     sub-unparser))
 (defn -and-unparser [x]
   (let [unparser (cannoical-unparser x)]
@@ -312,7 +314,6 @@
     :zoned-dateTime (string-encode-unparser x)
     :local-date (string-encode-unparser x)
     :zoned-date (string-encode-unparser x)
-    ;;:re (string-unparser x)
     :enum (string-unparser x)
     :decimal (string-encode-unparser x)
     :any (string-unparser x)
