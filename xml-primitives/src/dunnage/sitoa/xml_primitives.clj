@@ -242,5 +242,18 @@
              start-type]
             external-registry))
 
+(defn closed-make-schema [malli-registry start-type]
+  (m/schema [:schema {:registry
+                      (reduce-kv
+                        (fn [acc k v]
+                          (assoc acc k (mu/closed-schema v)))
+                        {}
+                        malli-registry)}
+             start-type]
+            external-registry))
+
 (defn update-start-type [schema start-type]
   (make-schema (-> schema m/properties :registry) start-type))
+
+(defn closed-update-start-type [schema start-type]
+  (closed-make-schema (-> schema m/properties :registry) start-type))
