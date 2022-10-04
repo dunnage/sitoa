@@ -22,7 +22,7 @@
 
 (def fop-parser (xml-parser fop-schema))
 (comment
-  (def message-schema (m/schema (schema/xds->registry {:default-ns "script"} (io/resource "V20170715/transport.xsd"))
+  (def message-schema (m/schema (schema/xds->registry {:default-ns "script"} (io/resource "NCPDP_20170715/transport.xsd"))
                                 {:registry (merge
                                              (m/default-schemas)
                                              (mu/schemas)
@@ -36,13 +36,13 @@
     (let [r ^XMLStreamReader (make-stream-reader {} s)]
       (p r)))
 
-  (def parsed (with-open [s (source (io/resource "V20170715/Message-1621652001272.xml"))]
+  (def parsed (with-open [s (source (io/resource "NCPDP_20170715/Message-1621652001272.xml"))]
                 (let [r ^XMLStreamReader (make-stream-reader {} s)]
                   (p r))))
-  (def parsed (with-open [s (source (io/resource "V20170715/Message-sig1.xml"))]
+  (def parsed (with-open [s (source (io/resource "NCPDP_20170715/Message-sig1.xml"))]
                 (let [r ^XMLStreamReader (make-stream-reader {} s)]
                   (p r))))
-  (def parsed (with-open [s (source (io/resource "V20170715/renewalrequest.xml"))]
+  (def parsed (with-open [s (source (io/resource "NCPDP_20170715/renewalrequest.xml"))]
                 (let [r ^XMLStreamReader (make-stream-reader {} s)]
                   (p r))))
 

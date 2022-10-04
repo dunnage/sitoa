@@ -11,7 +11,7 @@
   (xsd->schema {:default-ns "xsd"} (io/resource "XMLSchema.xsd"))
   (xsd->schema {:default-ns "fop"} (io/resource "fop.xsd"))
 
-  (def message-schema (m/schema (xsd->registry {:default-ns "script"} (io/resource "V20170715/transport.xsd"))
+  (def message-schema (m/schema (xsd->registry {:default-ns "script"} (io/resource "NCPDP_20170715/transport.xsd"))
                                 {:registry (merge
                                              (m/default-schemas)
                                              (mu/schemas)

@@ -9,7 +9,7 @@
 
 
 (comment
-  (def message-schema (schema/xsd->schema {:default-ns "script"} (io/resource "V20170715/transport.xsd")))
+  (def message-schema (schema/xsd->schema {:default-ns "script"} (io/resource "NCPDP_20170715/transport.xsd")))
   (def simple-message-schema  (m/-set-children message-schema (-> message-schema m/children first m/children first vector)))
 
 
