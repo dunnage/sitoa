@@ -12,7 +12,7 @@
 
 (defn make-stream-writer [props source]
   (let [fac (XMLOutputFactory/newInstance)]
-    (IndentingXMLStreamWriter.
+    (do                                                     ;IndentingXMLStreamWriter.
       (cond
         (instance? Writer source) (.createXMLStreamWriter fac ^Writer source)
         (instance? OutputStream source) (.createXMLStreamWriter fac ^OutputStream source)
@@ -241,6 +241,12 @@
     (fn [data ^XMLStreamWriter w]
       (.writeCharacters w (encoder data))))
   )
+
+(defn zoned-datetime-unparser [x]
+  (let []
+    (fn [^ZonedDateTime data ^XMLStreamWriter w]
+      (.writeCharacters w (str (.toInstant data)))))
+  )
 (defn -alt-unparser [x]
   (let [children (m/children x)
         subparsers (into []
@@ -298,9 +304,14 @@
 
 (defn -xml-unparser [x]
   (case (m/type x)
-    :schema (let [p (-xml-unparser (m/deref x))]
+    :schema (let [{:keys [topElement]} (m/properties x)
+                  p (-xml-unparser (m/deref x))]
               (fn [data ^XMLStreamWriter w]
+                (.writeStartElement w topElement)
+                (.writeAttribute w "xmlns:xsd" "http://www.w3.org/2001/XMLSchema")
+                (.writeAttribute w "xmlns:xsi" "http://www.w3.org/2001/XMLSchema-instance")
                 (let [result (p data w)]
+                  (.writeEndElement w)
                   (.close w)
                   result)))
     :malli.core/schema
@@ -311,7 +322,7 @@
     :string (string-unparser x)
     :re (string-unparser x)
     :local-dateTime (string-encode-unparser x)
-    :zoned-dateTime (string-encode-unparser x)
+    :zoned-dateTime (zoned-datetime-unparser x)
     :local-date (string-encode-unparser x)
     :zoned-date (string-encode-unparser x)
     :enum (string-unparser x)
@@ -332,7 +343,7 @@
     ))
 (defn document-writer [f]
   (fn [data ^XMLStreamWriter w]
-    (.writeStartDocument w)
+    (.writeStartDocument w "UTF-8" "1.0")
     (f data w)
     (.writeEndDocument w)
     ))
@@ -340,7 +351,7 @@
   (fn [data]
     (with-open [s (StringWriter.)]
       (with-open [w ^XMLStreamWriter (make-stream-writer {} s)]
-        (.writeStartDocument w)
+        (.writeStartDocument w "utf-8" "1.0")
         (f data w)
         (.writeEndDocument w))
       (str s))))
