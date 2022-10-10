@@ -308,8 +308,8 @@
                   p (-xml-unparser (m/deref x))]
               (fn [data ^XMLStreamWriter w]
                 (.writeStartElement w topElement)
-                (.writeAttribute w "xmlns:xsd" "http://www.w3.org/2001/XMLSchema")
-                (.writeAttribute w "xmlns:xsi" "http://www.w3.org/2001/XMLSchema-instance")
+                ;(.writeAttribute w "xmlns:xsd" "http://www.w3.org/2001/XMLSchema")
+                ;(.writeAttribute w "xmlns:xsi" "http://www.w3.org/2001/XMLSchema-instance")
                 (let [result (p data w)]
                   (.writeEndElement w)
                   (.close w)
