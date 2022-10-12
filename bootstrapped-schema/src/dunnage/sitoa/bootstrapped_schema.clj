@@ -425,7 +425,7 @@
         "list"
         (let [ct (.getContentType x)]
           (if (identical? ct x)
-            (do (prn (.getName x) (.getDeclaredFacets x)) #_(pp/pprint (bean x))
+            (do                                             ;(prn (.getName x) (.getDeclaredFacets x)) #_(pp/pprint (bean x))
               :any)
             [:sequence {:primitive true}
              (if (anon-type? ct)
