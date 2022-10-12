@@ -2,6 +2,7 @@
   (:require [clojure.java.io :as io]
 
             [malli.core :as m]
+            [io.pedestal.log :as log]
            )
   (:import
     (java.io InputStream Reader StringReader)
@@ -57,7 +58,7 @@
 (defn safe-next-tag [^XMLStreamReader r]
   (when (.hasNext r)
     (loop [tok (.next r)]
-      ;(prn tok)
+      ;(log/trace tok)
       (case tok
         (1 2 8)                                                 ;START_ELEMENT
         tok
@@ -72,7 +73,7 @@
 (defn safe-exit-tag [tag]
   (fn [^XMLStreamReader r]
     (let [tok (.getEventType r)]
-      ;(prn tok)
+      ;(log/trace tok)
       (case tok
         (1 8)                                             ;START_ELEMENT
         tok
@@ -150,7 +151,7 @@
     ))
 (defn skip-closing-and-charactors [^XMLStreamReader r]
   (loop [tok (.getEventType r)]
-    ;(prn tok)
+    ;(log/trace tok)
     (case tok
       1                                        ;START_ELEMENT
       nil
@@ -162,7 +163,7 @@
 
 (defn skip-characters [^XMLStreamReader r]
   (loop [tok (.getEventType r)]
-    ;(prn tok)
+    ;(log/trace tok)
     (case tok
       1                                        ;START_ELEMENT
       nil
@@ -175,28 +176,28 @@
   (fn [^XMLStreamReader r]
     (let [txt (.getElementText r)]
       ;(safe-exit-tag r)
-      ;(prn :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
+      ;(log/trace :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
       txt)))
 
 (defn local-date-parser [x]
   (fn [^XMLStreamReader r]
     (let [txt (.getElementText r)]
       ;(safe-exit-tag r)
-      ;(prn :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
+      ;(log/trace :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
       (LocalDate/parse txt))))
 
 (defn local-time-parser [x]
   (fn [^XMLStreamReader r]
     (let [txt (.getElementText r)]
       ;(safe-exit-tag r)
-      ;(prn :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
+      ;(log/trace :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
       (LocalTime/parse txt))))
 
 (defn local-date-time-parser [x]
   (fn [^XMLStreamReader r]
     (let [txt (.getElementText r)]
       ;(safe-exit-tag r)
-      ;(prn :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
+      ;(log/trace :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
       (try
         (LocalDateTime/parse txt)
         (catch DateTimeParseException e
@@ -206,14 +207,14 @@
   (fn [^XMLStreamReader r]
     (let [txt (.getElementText r)]
       ;(safe-exit-tag r)
-      ;(prn :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
+      ;(log/trace :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
       (ZonedDateTime/parse txt))))
 
 (defn decimal-parser [x]
   (fn [^XMLStreamReader r]
     (let [txt (.getElementText r)]
       ;(safe-exit-tag r)
-      ;(prn :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
+      ;(log/trace :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
       (BigDecimal. txt))))
 
 (defn boolean-parser [x]
@@ -260,7 +261,7 @@
                acc))
       ([acc [nexttagk tag-parser tag-descrim]]
        (loop [tok (.getEventType r) val acc]
-         ; (prn :map (debug-element r) tags)
+         ; (log/trace :map (debug-element r) tags)
          (case tok
            1                                                ;START_ELEMENT
            (let [tagk (get-tag-kw r)]
@@ -272,14 +273,14 @@
                  val
                  ;(recur (.getEventType r) val)
                  )
-               (do (prn :leave-start-next tagk)
+               (do (log/trace :leave-start-next tagk)
                    val)))
 
            2                                                ;END_ELEMENT
            (let [tagk (get-tag-kw r)]
              (if (tags tagk)
                (recur (.next r) val)
-               (do (prn :leave tagk)
+               (do (log/trace :leave tagk)
                    val)))
            (3 4 5 6)                                        ;COMMENT
            (recur (.next r) val)
@@ -314,7 +315,7 @@
                       (remove (fn [[_ opts]] (-> opts :xml/attr)))
                       (fn ([acc]acc)
                         ([acc [tag opts subschema]]
-                         ;(prn (m/form (m/deref subschema)))
+                         ;(log/trace (m/form (m/deref subschema)))
                          (conj acc [tag
                                     (case (m/form (m/deref subschema))
                                       :org.w3.www.2001.XMLSchema/dateTime
@@ -337,13 +338,13 @@
       ;(assert (= (.getEventType r) 1) (pr-str (.getEventType r)
       ;                                   (.getText r)
       ;                                   x))
-      ;(prn :map (.getLocalName r))
+      ;(log/trace :map (.getLocalName r))
 
       (let [val2 (reduce
                    (fn [acc entry]
                      (if-some [attr-parser (get attribute-parsers (key entry))]
                        (conj! acc (attr-parser entry))
-                       (do (prn :skip entry)
+                       (do (log/trace :skip entry)
                            acc)))
                    (transient {})
                    (attribute-reducible r))
@@ -370,7 +371,7 @@
 (defn -map-discriminator [x]
   (into #{}
         (comp (remove (fn [[_ opt]]
-                        ; (prn :mapdes opt)
+                        ; (log/trace :mapdes opt)
                         (:xml/attr opt)))
               (take-while-plus-1 (fn [[_ opt]]
                                    (= (:optional opt) true)))
@@ -434,7 +435,7 @@
     ;:any (string-parser x)
     :tuple (-tuple-discriminator x)
     :alt  (-alt-discriminator x)
-    :or (do                                                 ;(prn x)
+    :or (do                                                 ;(log/trace x)
           (-alt-discriminator x))
     :cat (-cat-discriminator x)
     :and (let [f (first (m/children x))]
@@ -450,7 +451,7 @@
 
 (defn -alt-parser [x]
   (let [children (-> x m/children)
-        ;_ (prn children)
+        ;_ (log/trace children)
         discriminator-parsers (into [] (map (juxt make-tag-discriminator
                                                   #(case (-> % m/deref-all m/type)
                                                      ;(:alt :cat) (wrap-next-after-tag (-xml-parser %))
@@ -462,14 +463,14 @@
     (fn [^XMLStreamReader r]
       #_(assert (= (safe-next-tag r) 1) (pr-str (.getEventType r)
                                          x))
-      (prn :-alt-parser (.getLocalName r))
+      (log/trace :-alt-parser (.getLocalName r))
       (reduce
         (fn [acc [discriminator parser wrap?]]
           (let [tagk (get-tag-kw r)]
-            (prn :alt tagk discriminator (discriminator tagk))
+            (log/trace :alt tagk :discriminator discriminator :tag-discriminator (discriminator tagk))
             (if (discriminator tagk)
               (let [v (parser r)]
-                (prn :alt tagk v :before-return (debug-element r))
+                (log/trace :type :alt :tagk tagk :v v :before-return (debug-element r))
                 ;(skip-closing-and-charactors r)
                 (if wrap?
                   (reduced [v])
@@ -480,7 +481,7 @@
 
 (defn -or-parser [x]
   (let [children (-> x m/children)
-        ;_ (prn children)
+        ;_ (log/trace children)
         discriminator-parsers (into [] (map (juxt make-tag-discriminator
                                                   #(case (-> % m/deref-all m/type)
                                                      ;(:alt :cat) (wrap-next-after-tag (-xml-parser %))
@@ -489,14 +490,14 @@
     (fn [^XMLStreamReader r]
       #_(assert (= (safe-next-tag r) 1) (pr-str (.getEventType r)
                                                 x))
-      (prn :-or-parser (.getLocalName r) (debug-element r))
+      (log/trace :type :-or-parser :local (.getLocalName r) :debug (debug-element r))
       (reduce
         (fn [acc [discriminator parser]]
           (let [tagk (get-tag-kw r)]
-            (prn :or tagk discriminator (discriminator tagk))
+            (log/trace :or tagk discriminator (discriminator tagk))
             (if (discriminator tagk)
               (let [v (parser r)]
-                (prn :or tagk v :before-return (debug-element r))
+                (log/trace :type :or :tagk tagk :v v :before-return (debug-element r))
                 ;(skip-closing-and-charactors r)
                 (reduced v))
               acc)))
@@ -505,7 +506,7 @@
 
 (defn -maybe-parser [x]
   (let [children (-> x m/children)
-        ;_ (prn children)
+        ;_ (log/trace children)
         discriminator-parsers (into [] (map (juxt make-tag-discriminator
                                                   #(case (-> % m/deref-all m/type)
                                                      ;(:alt :cat) (wrap-next-after-tag (-xml-parser %))
@@ -514,14 +515,14 @@
     (fn [^XMLStreamReader r]
       #_(assert (= (safe-next-tag r) 1) (pr-str (.getEventType r)
                                                 x))
-      (prn :-or-parser (.getLocalName r) (debug-element r))
+      (log/trace :type :-or-parser :local (.getLocalName r) :debug (debug-element r))
       (reduce
         (fn [acc [discriminator parser]]
           (let [tagk (get-tag-kw r)]
-            (prn :or tagk discriminator (discriminator tagk))
+            (log/trace :type :or :tagk tagk :discriminator discriminator :discriminatork (discriminator tagk))
             (if (discriminator tagk)
               (let [v (parser r)]
-                (prn :or tagk v :before-return(debug-element r))
+                (log/trace :type :or :tagk tagk :v v :before-return (debug-element r))
                 ;(skip-closing-and-charactors r)
                 (reduced v))
               acc)))
@@ -540,27 +541,27 @@
                                            make-tag-discriminator
                                            #(case (-> % m/deref-all m/type)
                                               (:alt :cat :? :+ :repeat :*) [true (-xml-parser %)]
-                                              ;(:ref) (do (prn :ref)
+                                              ;(:ref) (do (log/trace :ref)
                                               ;           [true (-xml-parser %)])
                                               ;(:or) [false (wrap-next-after-tag (-xml-parser %))]
                                               ; (:tuple) (wrap-next-before-tag (-xml-parser %))
                                               [false (-xml-parser %)])
-                                           #_(prn (-> % m/deref-all m/children first m/type))))
+                                           #_(log/trace (-> % m/deref-all m/children first m/type))))
                                     children)]
     (fn [^XMLStreamReader r]
       ;(assert (= (safe-next-tag r) 1))
 
       (reduce
         (fn [acc [discriminator [inline-data? parser]]]
-          ;(prn :cat :pre (debug-element r))
+          ;(log/trace :cat :pre (debug-element r))
           (let [tagk (get-tag-kw r)]
-            (prn :cat tagk discriminator inline-data? (discriminator tagk) (debug-element r))
+            (log/trace :cat tagk discriminator inline-data? (discriminator tagk) (debug-element r))
             (if (discriminator tagk)
               (let [v (parser r)]
-                (prn :catv v :before-return (debug-element r))
+                (log/trace :catv v :before-return (debug-element r))
                 ;(skip-closing-and-charactors r)
                 ;(safe-next-tag r)
-                ;(prn :catv :return(debug-element r))
+                ;(log/trace :catv :return(debug-element r))
                 (if inline-data?
                   (into acc v)
                   (conj acc v)))
@@ -578,10 +579,10 @@
     (fn [^XMLStreamReader r]
       (let [tagk (get-tag-kw r)
             _    (assert (= schema-tag tagk) (debug-element r))
-            _    (prn :tuple schema-tag tagk :parse (debug-element r))
+            _    (log/trace :tuple schema-tag :tagk tagk :parse (debug-element r))
             toreturn [tagk (subparser r)]]
         ((safe-exit-tag tagk) r)
-        (prn :tuple toreturn :before-return (debug-element r))
+        (log/trace :tuple toreturn :before-return (debug-element r))
         ;(skip-closing-and-charactors r)
         ;(assert (= schema-tag (get-tag-kw r)) (pr-str (debug-element r)))
 
@@ -604,10 +605,10 @@
         ;(assert (= tag 1) (debug-element r))
         (if (= tag 1)
           (let [tagk (get-tag-kw r)]
-            (prn :-sequential-parser tagk :?= sequence-tag)
+            (log/trace :-sequential-parser tagk :?= sequence-tag)
             (if (= sequence-tag tagk)
               (let [v (sub-parser r)]
-                (prn :-sequential-parser tagk (debug-element r) v)
+                (log/trace :-sequential-parser tagk (debug-element r) v)
                 (recur (safe-next-tag r) (conj! acc v)))
               (not-empty (persistent! acc))))
           (not-empty (persistent! acc)))))))
@@ -618,11 +619,11 @@
         _    (assert (= 1 (count children)))
         child (first children)
         sub-discriminator (make-tag-discriminator child)
-        ;_ (prn child (-> child m/deref-all m/type))
-        ;_    (prn (-> child m/deref-all m/type))
+        ;_ (log/trace child (-> child m/deref-all m/type))
+        ;_    (log/trace (-> child m/deref-all m/type))
         inline?     (case (-> child m/deref-all m/type)
                       (:alt :cat :? :+ :repeat :*) true
-                      ;(:ref) (do (prn :ref)
+                      ;(:ref) (do (log/trace :ref)
                       ;           true)
                       false)
         sub-parser (-xml-parser child)]
@@ -630,11 +631,11 @@
       (loop [start-tag? (= (.getEventType r) 1) acc (transient [])]
         (if start-tag?
           (let [tagk (get-tag-kw r)]
-            (prn :-regex-parser-outer tagk sub-discriminator child (debug-element r))
+            (log/trace :type :-regex-parser-outer :tagk tagk :sub-discriminator sub-discriminator :child child :debug (debug-element r))
             (if (sub-discriminator tagk)
               (let [v (sub-parser r)]
                 ;(ensure-safe-next-tag r)
-                (prn :-regex-parser tagk (m/deref-all child) (debug-element r) v)
+                (log/trace :type :-regex-parser :tagk tagk :schema (m/deref-all child) :debug (debug-element r) :v v)
                 (recur (= (.getEventType r) 1) (if inline?
                                                  (reduce conj! acc v)
                                                  (conj! acc v))))
@@ -661,7 +662,7 @@
     :schema (-xml-parser (m/deref x))
     :malli.core/schema
     (let []
-      ;(prn x)
+      ;(log/trace x)
       (case (m/form x)
         :org.w3.www.2001.XMLSchema/dateTime
         (local-date-time-parser x)
