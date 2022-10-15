@@ -9,7 +9,7 @@
     (javax.xml.stream
       XMLInputFactory XMLStreamReader XMLStreamConstants)
     (clojure.lang IReduceInit MapEntry ITransientCollection)
-    (java.time LocalDate LocalDateTime ZonedDateTime LocalTime)
+    (java.time LocalDate LocalDateTime OffsetDateTime ZonedDateTime LocalTime)
     (java.time.format DateTimeParseException)
     (java.nio.file Files Path)))
 
@@ -198,7 +198,8 @@
     (let [txt (.getElementText r)]
       ;(safe-exit-tag r)
       ;(log/trace :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
-      (try
+      (LocalDateTime/parse txt)
+      #_(try
         (LocalDateTime/parse txt)
         (catch DateTimeParseException e
           (ZonedDateTime/parse txt))))))
@@ -208,7 +209,7 @@
     (let [txt (.getElementText r)]
       ;(safe-exit-tag r)
       ;(log/trace :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
-      (ZonedDateTime/parse txt))))
+      (OffsetDateTime/parse txt))))
 
 (defn decimal-parser [x]
   (fn [^XMLStreamReader r]
@@ -431,7 +432,7 @@
     (:? :*  :+  :repeat :sequential) (make-tag-discriminator (-single-sub-item x))
     :map (-map-discriminator x)
     :merge  (-alt-discriminator x)
-    (:string :zoned-dateTime :local-date :local-dateTime :enum :re :decimal) nil #_(do #{allways-true-discriminator})
+    (:string :offset-dateTime :local-date :local-dateTime :enum :re :decimal) nil #_(do #{allways-true-discriminator})
     ;:any (string-parser x)
     :tuple (-tuple-discriminator x)
     :alt  (-alt-discriminator x)
@@ -673,7 +674,7 @@
     :string (string-parser x)
     :re (string-parser x)
     :local-dateTime (local-date-time-parser x)
-    :zoned-dateTime (zoned-date-time-parser x)
+    :offset-dateTime (zoned-date-time-parser x)
     :local-date (local-date-parser x)
     :local-time (local-time-parser x)
     ;:re (string-parser x)

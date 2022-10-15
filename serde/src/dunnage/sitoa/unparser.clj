@@ -7,7 +7,7 @@
     (javax.xml.stream
       XMLOutputFactory XMLStreamWriter XMLStreamConstants)
     (com.sun.xml.txw2.output IndentingXMLStreamWriter)
-    (java.time ZonedDateTime LocalDateTime LocalDate)))
+    (java.time OffsetDateTime LocalDateTime LocalDate)))
 
 
 (defn make-stream-writer [props source]
@@ -47,7 +47,7 @@
 
 (defn zoned-dateTime-discriminator [x]
   (fn [data]
-    (instance? ZonedDateTime data)))
+    (instance? OffsetDateTime data)))
 
 (defn -alt-discriminator [x]
   true)
@@ -109,7 +109,7 @@
     ;:string (string-discriminator x)
     ;:re (string-discriminator x)
     :local-dateTime (local-date-time-discriminator x)
-    :zoned-dateTime (zoned-dateTime-discriminator x)
+    :offset-dateTime (zoned-dateTime-discriminator x)
     ;:local-date (local-date-discriminator x)
     ;;:re (string-discriminator x)
     ;:enum (string-discriminator x)
@@ -242,9 +242,9 @@
       (.writeCharacters w (encoder data))))
   )
 
-(defn zoned-datetime-unparser [x]
+(defn offset-datetime-unparser [x]
   (let []
-    (fn [^ZonedDateTime data ^XMLStreamWriter w]
+    (fn [^OffsetDateTime data ^XMLStreamWriter w]
       (.writeCharacters w (str (.toInstant data)))))
   )
 (defn -alt-unparser [x]
@@ -322,7 +322,7 @@
     :string (string-unparser x)
     :re (string-unparser x)
     :local-dateTime (string-encode-unparser x)
-    :zoned-dateTime (zoned-datetime-unparser x)
+    :offset-dateTime (offset-datetime-unparser x)
     :local-date (string-encode-unparser x)
     :zoned-date (string-encode-unparser x)
     :enum (string-unparser x)

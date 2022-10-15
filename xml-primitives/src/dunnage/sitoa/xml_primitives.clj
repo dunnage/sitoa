@@ -3,7 +3,7 @@
             [clojure.test.check.generators :as gen]
             [malli.transform :as mt]
             [malli.util :as mu])
-  (:import (java.time LocalDateTime LocalDate LocalTime ZonedDateTime ZoneId)))
+  (:import (java.time LocalDateTime LocalDate LocalTime OffsetDateTime ZoneId)))
 
 (defn -string->localDateTime [x]
   (if (string? x)
@@ -19,10 +19,10 @@
       (catch Exception _e x))
     x))
 
-(defn -string->zonedDateTime [x]
+(defn -string->OffsetDateTime [x]
   (if (string? x)
     (try
-      (ZonedDateTime/parse x)
+      (OffsetDateTime/parse x)
       (catch Exception _e x))
     x))
 
@@ -47,9 +47,9 @@
     (.write "\"")
     (.write (.toString x))
     (.write "\"")))
-(defmethod print-method ZonedDateTime [^ZonedDateTime x writer]
+(defmethod print-method OffsetDateTime [^OffsetDateTime x writer]
   (doto writer
-    (.write "#ZonedDateTime ")
+    (.write "#OffsetDateTime ")
     (.write "\"")
     (.write (.toString x))
     (.write "\"")))
@@ -103,11 +103,11 @@
                                                                  second ^Long (gen/large-integer* {:min 0 :max 59})
                                                                  nanosofsecond ^Long (gen/large-integer* {:min 0 :max 1000000})]
                                                                 (LocalDateTime/of year month day hour minute second nanosofsecond))}})
-   :zoned-dateTime (m/-simple-schema
-                     {:type            :zoned-dateTime
-                      :pred            #(instance? ZonedDateTime %)
+   :offset-dateTime (m/-simple-schema
+                     {:type            :offset-dateTime
+                      :pred            #(instance? OffsetDateTime %)
                       :type-properties {:error/message "should be localDateTime"
-                                        :decode/string -string->zonedDateTime
+                                        :decode/string -string->OffsetDateTime
                                         :encode/string mt/-any->string
                                         ;:json-schema/type    "integer"
                                         ;:json-schema/format  "int64"
@@ -119,7 +119,7 @@
                                                                  minute ^Long (gen/large-integer* {:min 0 :max 59})
                                                                  second ^Long (gen/large-integer* {:min 0 :max 59})
                                                                  nanosofsecond ^Long (gen/large-integer* {:min 0 :max 1000000})]
-                                                                (ZonedDateTime/of (LocalDateTime/of year month day hour minute second nanosofsecond) (ZoneId/of "UTC")))}})
+                                                                (OffsetDateTime/of (LocalDateTime/of year month day hour minute second nanosofsecond) (ZoneId/of "UTC")))}})
    :local-time     (m/-simple-schema
                      {:type            :local-time
                       :pred            #(instance? LocalTime %)
@@ -154,7 +154,7 @@
    :org.w3.www.2001.XMLSchema/base64Binary                 :any ;(m/-simple-schema {:type :bytes, :pred bytes?}) ;byte[]
    :org.w3.www.2001.XMLSchema/hexBinary                    :any ;(m/-simple-schema {:type :bytes, :pred bytes?}) ;byte[]
    :org.w3.www.2001.XMLSchema/date,                        :local-date ;javax.xml.datatype.XMLGregorianCalendar
-   :org.w3.www.2001.XMLSchema/dateTime,                    [:or :zoned-dateTime
+   :org.w3.www.2001.XMLSchema/dateTime,                    [:or :offset-dateTime
                                                             :local-dateTime]  ;javax.xml.datatype.XMLGregorianCalendar
    :org.w3.www.2001.XMLSchema/time,                        :local-time ;javax.xml.datatype.XMLGregorianCalendar
    :org.w3.www.2001.XMLSchema/duration                     :any ;javax.xml.datatype.Duration
