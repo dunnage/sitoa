@@ -666,7 +666,7 @@
       ;(log/trace x)
       (case (m/form x)
         :org.w3.www.2001.XMLSchema/dateTime
-        (local-date-time-parser x)
+        (zoned-date-time-parser x)
         (-xml-parser (m/deref x))))
     :ref (ref-parser x)                                     ; (-xml-parser (m/deref x))
     :merge (-xml-parser (m/deref x))
