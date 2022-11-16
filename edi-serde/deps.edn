@@ -1,4 +1,4 @@
-{:paths ["src" "resources"]
+{:paths ["src" "dev-resources"]
  :deps  {org.clojure/clojure {:mvn/version "1.11.1"}
          io.xlate/staedi     {:mvn/version "1.22.0"}}
  :aliases
