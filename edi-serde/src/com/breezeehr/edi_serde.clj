@@ -12,7 +12,8 @@
   (def fact  (EDIInputFactory/newFactory))
   (.setProperty fact EDIInputFactory/EDI_IGNORE_EXTRANEOUS_CHARACTERS true)
   (.setProperty fact EDIInputFactory/EDI_VALIDATE_CONTROL_STRUCTURE false)
-  (let [r (.createEDIStreamReader fact (io/input-stream (io/resource  "271.edi"
+  (let [r (.createEDIStreamReader fact (io/input-stream (io/resource  #_"271-3.edi"
+                                                                      "simple_with_binary_segment.edi"
                                                           #_"sample837-original.edi")))]
     (loop []
       (if (.hasNext r)
