@@ -50,7 +50,10 @@
     (instance? OffsetDateTime data)))
 
 (defn -alt-discriminator [x]
-  true)
+  (let [children (m/children x)
+        sub-discriminator (mapv -xml-discriminator children)]
+    (fn [data]
+      (some sub-discriminator data))))
 
 (defn -tuple-discriminator [x]
   (let [[enum] (m/children x)
@@ -231,7 +234,7 @@
                 (recur (inc pos) (rest subparsers) (into acc (unparser item-data w)))
                 acc)
               )
-            (do (assert false data)
+            (do                                             ;(assert false data)
                 acc))
           acc)
         ))))
@@ -266,8 +269,8 @@
         ;sub-discriminator (make-tag-discriminator child)
         sub-unparser (-xml-unparser child)]
     (fn [data ^XMLStreamWriter w]
-      (reduce (fn [acc [discriminator unparser]]
-                (conj acc (sub-unparser data w)))
+      (reduce (fn [acc item]
+                (sub-unparser item w))
               []
               data))))
 
