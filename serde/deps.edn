@@ -6,7 +6,8 @@
          io.github.dunnage.sitoa/bootstrapped-schema {:local/root "../bootstrapped-schema"
                                                       :deps/root  "bootstrapped-schema"}
          io.github.dunnage.sitoa/xml-primitives      {:local/root "../xml-primitives"
-                                                      :deps/root  "xml-primitives"}}
+                                                      :deps/root  "xml-primitives"}
+         net.cgrand/xforms                           {:mvn/version "0.19.4"}}
  :aliases
  {:build {:deps       {io.github.seancorfield/build-clj
                        {:git/tag "v0.6.3" :git/sha "9b8e09b"}}
