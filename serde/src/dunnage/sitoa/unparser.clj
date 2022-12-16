@@ -14,11 +14,14 @@
 (defn make-stream-writer [props source]
   (let [fac (XMLOutputFactory/newInstance)]
     (do                                                     ;IndentingXMLStreamWriter.
-      (cond
-        (instance? Writer source) (.createXMLStreamWriter fac ^Writer source)
-        (instance? OutputStream source) (.createXMLStreamWriter fac ^OutputStream source)
-        :else (throw (IllegalArgumentException.
-                       "source should be java.io.Reader or java.io.OutputStream"))))))
+      (cond->
+        (cond
+          (instance? Writer source) (.createXMLStreamWriter fac ^Writer source)
+          (instance? OutputStream source) (.createXMLStreamWriter fac ^OutputStream source)
+          :else (throw (IllegalArgumentException.
+                         "source should be java.io.Reader or java.io.OutputStream")))
+        (:indent props)
+        (IndentingXMLStreamWriter. )))))
 
 (defn sink [s]
   (io/writer s))
@@ -511,14 +514,17 @@
     (f data nil w)
     (.writeEndDocument w)
     ))
-(defn string-writer [f]
-  (fn [data]
-    (with-open [s (StringWriter.)]
-      (with-open [w ^XMLStreamWriter (make-stream-writer {} s)]
-        (.writeStartDocument w "utf-8" "1.0")
-        (f data nil w)
-        (.writeEndDocument w))
-      (str s))))
+(defn string-writer
+  ([f]
+   (string-writer f {}))
+  ([f options]
+   (fn [data]
+     (with-open [s (StringWriter.)]
+       (with-open [w ^XMLStreamWriter (make-stream-writer options s)]
+         (.writeStartDocument w "utf-8" "1.0")
+         (f data nil w)
+         (.writeEndDocument w))
+       (str s)))))
 
 (defn xml-unparser
   "takes malli schema and options
@@ -538,7 +544,7 @@
   ([?schema]
    (xml-string-unparser ?schema nil))
   ([?schema options]
-   (string-writer (-xml-unparser (m/schema ?schema options)))
+   (string-writer (-xml-unparser (m/schema ?schema options)) options)
 
    #_(m/-cached (m/schema ?schema options) :xml-unparser -xml-unparser)))
 
