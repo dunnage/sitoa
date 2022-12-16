@@ -291,20 +291,31 @@
                       (fn ([acc]acc)
                         ([acc [tag opts subschema]]
                          ;(prn (m/form (m/deref subschema)))
-                         (conj acc [tag
-                                    (-xml-unparser subschema)
-                                    ])
-                         ))
+                         (conj acc (case (-> subschema m/type)
+                                     :sequential
+                                     (let [subsubschema (m/children subschema)]
+                                       (assert (= 1 (count subsubschema)))
+                                       [tag
+                                        (-xml-unparser (first subsubschema))
+                                        true])
+                                     [tag
+                                      (-xml-unparser subschema)
+                                      false]))))
                       []
                       children)]
     (if in-seq-ex
       (fn [data pos ^XMLStreamWriter w]
         ;(prn data pos x)
-        (run! (fn [[key subwriter]]
-                (when-some [subdata (get data key)]
-                  (.writeStartElement w (name key))
-                  (subwriter subdata nil w)
-                  (.writeEndElement w)))
+        (run! (fn [[key subwriter seq?]]
+                (if seq?
+                  (doseq [subdata (get data key)]
+                    (.writeStartElement w (name key))
+                    (subwriter subdata nil w)
+                    (.writeEndElement w))
+                  (when-some [subdata (get data key)]
+                    (.writeStartElement w (name key))
+                    (subwriter subdata nil w)
+                    (.writeEndElement w))))
               tag-writers)
         (inc pos))
       (fn [data pos ^XMLStreamWriter w]
@@ -325,13 +336,16 @@
                                   tag-writers)
                 value (:value data)]
             (valuewriter value nil w))
-          (run! (fn [[key subwriter]]
-                  (when-some [subdata (get data key)]
-                    (.writeStartElement w (name key))
-                    (subwriter subdata nil w)
-                    (.writeEndElement w)
-                    )
-                  )
+          (run! (fn [[key subwriter seq?]]
+                  (if seq?
+                    (doseq [subdata (get data key)]
+                      (.writeStartElement w (name key))
+                      (subwriter subdata nil w)
+                      (.writeEndElement w))
+                    (when-some [subdata (get data key)]
+                      (.writeStartElement w (name key))
+                      (subwriter subdata nil w)
+                      (.writeEndElement w))))
                 tag-writers))))))
 
 (defn -cat-unparser [x]
