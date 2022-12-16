@@ -473,14 +473,21 @@
   (case (m/type x)
     :schema (let [{:keys [topElement]} (m/properties x)
                   p (-xml-unparser (m/deref x))]
-              (fn [data pos ^XMLStreamWriter w]
-                (.writeStartElement w topElement)
-                ;(.writeAttribute w "xmlns:xsd" "http://www.w3.org/2001/XMLSchema")
-                ;(.writeAttribute w "xmlns:xsi" "http://www.w3.org/2001/XMLSchema-instance")
-                (let [result (p data nil w)]
-                  (.writeEndElement w)
-                  (.close w)
-                  result)))
+              (if topElement
+                (fn [data pos ^XMLStreamWriter w]
+                  (.writeStartElement w topElement)
+                  ;(.writeAttribute w "xmlns:xsd" "http://www.w3.org/2001/XMLSchema")
+                  ;(.writeAttribute w "xmlns:xsi" "http://www.w3.org/2001/XMLSchema-instance")
+                  (let [result (p data nil w)]
+                    (.writeEndElement w)
+                    (.close w)
+                    result))
+                (fn [data pos ^XMLStreamWriter w]
+                  ;(.writeAttribute w "xmlns:xsd" "http://www.w3.org/2001/XMLSchema")
+                  ;(.writeAttribute w "xmlns:xsi" "http://www.w3.org/2001/XMLSchema-instance")
+                  (let [result (p data nil w)]
+                    (.close w)
+                    result))))
     :malli.core/schema
     (-xml-unparser (m/deref x))
     :ref (-xml-unparser (m/deref x))
