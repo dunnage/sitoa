@@ -2,6 +2,7 @@
   (:require [clojure.java.io :as io]
             [net.cgrand.xforms :as xforms]
             [malli.core :as m]
+            [io.pedestal.log :as log]
             [malli.transform :as transform])
   (:import
     (java.io OutputStream Writer StringWriter)
@@ -21,7 +22,7 @@
           :else (throw (IllegalArgumentException.
                          "source should be java.io.Reader or java.io.OutputStream")))
         (:indent props)
-        (IndentingXMLStreamWriter. )))))
+        (IndentingXMLStreamWriter.)))))
 
 (defn sink [s]
   (io/writer s))
@@ -43,7 +44,7 @@
     false))
 
 (defn seqex-optional? [x]
-  ; (prn x)
+  #_(log/info :seqex-optional? x)
   (case (m/type x)
     :repeat (-> x m/properties :min (< 1))
     :? true
@@ -52,188 +53,223 @@
     :alt (every? seqex-optional? (m/children x))
     :cat (every? seqex-optional? (m/children x))
     :map (and                                               ;(-> x m/properties :xml/in-seq-ex boolean)
-              (every? (comp :optional second) (m/children x)))
+           (every? (comp :optional second) (m/children x)))
     false))
 
 
 #_(defn single-top-unparser [elements-unparsers]
-  (make-loop {:start-element
-              (fn [^XMLStreamWriter r stop state]
-                (let [tag (.getLocalName r)]
-                  (if-some [tag-unparser (get elements-unparsers tag)]
-                    (tag-unparser r)
-                    (assert false))))
-              :end-element
-              (fn [^XMLStreamWriter r stop state]
-                (let [tag (.getLocalName r)]
-                  (if-some [tag-unparser (get elements-unparsers tag)]
-                    (persistent! state)
-                    (assert false))))
-              :end-document
-              valid-end-single-document}))
-(defn local-date-time-discriminator [x]
-  (fn [data pos]
-    (instance? LocalDateTime data)))
+    (make-loop {:start-element
+                (fn [^XMLStreamWriter r stop state]
+                  (let [tag (.getLocalName r)]
+                    (if-some [tag-unparser (get elements-unparsers tag)]
+                      (tag-unparser r)
+                      (assert false))))
+                :end-element
+                (fn [^XMLStreamWriter r stop state]
+                  (let [tag (.getLocalName r)]
+                    (if-some [tag-unparser (get elements-unparsers tag)]
+                      (persistent! state)
+                      (assert false))))
+                :end-document
+                valid-end-single-document}))
 
-(defn zoned-dateTime-discriminator [x]
-  (fn [data pos]
-    (instance? OffsetDateTime data)))
+;if in-regex returns a function that returns pos after consumption
+(defn local-date-time-discriminator [x in-regex?]
+  (if in-regex?
+    (fn [data pos]
+      (if (instance? LocalDateTime (nth data pos))
+        (inc pos)
+        pos))
+    (fn [data]
+      (instance? LocalDateTime data))))
 
-(defn -alt-discriminator [x]
+(defn zoned-dateTime-discriminator [x in-regex?]
+  (if in-regex?
+    (fn [data pos]
+      (if (instance? OffsetDateTime (nth data pos))
+        (inc pos)
+        pos))
+    (fn [data]
+      (instance? OffsetDateTime data))))
+
+(defn -alt-discriminator [x in-regex?]
   (let [children (m/children x)
         sub-discriminators (into []
-                                 (map (juxt -xml-discriminator seqex? seqex-optional? identity))
-                                 children)]
-    (fn [data pos]
-      (xforms/some
-        (keep (fn [[discriminator seqex? optional? sch]]
-               (if seqex?
-                 (discriminator data pos)
-                 (let [data-element (nth data pos)]
-                   (if (discriminator data-element nil)
-                     (inc pos))))))
-        sub-discriminators))))
+                                 (map (juxt #(-xml-discriminator % true) seqex? seqex-optional? identity))
+                                 children)
+        f
+        (fn [data pos]
+          (or (xforms/some
+                (keep (fn [[discriminator seqex? optional? sch]]
+                        (let [disc (discriminator data pos)]
+                          (log/info :type :-alt-discriminator
+                                    :tag [disc pos]
+                                    :sch sch
+                                    ; :data data
+                                    )
+                          (if (> disc pos)
+                            disc))))
+                sub-discriminators)
+              pos))]
+    (if in-regex?
+      f
+      (fn [data] (pos? (f data 0))))))
 
-(defn -tuple-discriminator [x]
+(defn -tuple-discriminator [x in-regex?]
   (let [[enum] (m/children x)
-        _  (assert (= (m/type enum) :enum))
-         options (m/children enum)
+        _ (assert (= (m/type enum) :enum))
+        options (m/children enum)
         _ (assert (= (count options) 1))
-        tag (nth options 0)]
-    (fn [data pos]
-      (and (vector? data) (= tag (nth data 0) )))))
+        tag (nth options 0)
+        f
+        (fn [data] (and (vector? data) (= tag (nth data 0))))]
+    (if in-regex?
+      (fn [data pos]
+        (log/info :type :-tuple-discriminator :vector (vector? data)
+                    :tag [tag (nth data 0)])
 
-(defn -regex-discriminator [x]
+        (if (f (nth data pos))
+          (inc pos)
+          pos))
+      f)))
+
+(defn -regex-discriminator [x in-regex?]
   (let [children (m/children x)
         _ (assert (= 1 (count children)))
         child (first children)
-        discriminator (-xml-discriminator child)
-        seqex?       (seqex? child)
-        optional?     (seqex-optional? child)
-        sch child]
-    (fn [data ogpos]
-      (loop [pos (or ogpos 0)]
-        (if (< pos (count data))
-          (if seqex?
-            (if-some [next-pos (discriminator data pos)]
-              (do   (prn  sch)
+        discriminator (-xml-discriminator child true)
+        seqex? (seqex? child)
+        optional? (seqex-optional? child)
+        sch child
+        f
+        (fn [data ogpos]
+          (loop [pos (or ogpos 0)]
+            (if (< pos (count data))
+              (let [next-pos (discriminator data pos)]
+                (log/info :type :-regex-discriminator
+                          next-pos pos
+                          :sch sch)
                 (if (> next-pos pos)
                   (recur next-pos)
-                  ogpos))
-              (if optional?
-                pos
-                ogpos))
-            (let [item-data (nth data pos)]
-              ; (prn item-data :check sch)
-              (if (discriminator item-data nil)
-                (recur (inc pos))
-                (if optional?
-                  pos
-                  ogpos))))
-          pos)
-        ))))
+                  pos))
+              pos)))]
+    (if in-regex?
+      f
+      (fn [data] (pos? (f data 0))))))
 
-(defn -cat-discriminator [x]
+(defn -cat-discriminator [x in-regex?]
   (let [children (m/children x)
         sub-discriminators
         (into []
-              (map (juxt -xml-discriminator seqex? seqex-optional? identity))
-              children)]
-    (fn [data ogpos]
-      (loop [pos (or ogpos 0) sub-discriminators sub-discriminators]
-        (if (< pos (count data))
-          (if-some [[discriminator seqex? optional? sch] (first sub-discriminators)]
-            (if seqex?
-              (if-some [next-pos (discriminator data pos)]
-                (if (> next-pos pos)
-                  (recur next-pos (rest sub-discriminators))
-                  ogpos)
-                (if optional?
-                  (recur pos (rest sub-discriminators))
-                  ogpos))
-              (let [item-data (nth data pos)]
-                ; (prn item-data :check sch)
-                (if (discriminator item-data nil)
-                  (recur (inc pos) (rest sub-discriminators))
-                  (if optional?
-                    (recur pos (rest sub-discriminators))
-                    ogpos))))
-            (do (assert false data)
-                pos))
-          pos)
-        ))))
+              (map (juxt #(-xml-discriminator % true) seqex? seqex-optional? identity))
+              children)
+        f
+        (fn [data ogpos]
+          (loop [pos (or ogpos 0) sub-discriminators sub-discriminators]
+            (if (< pos (count data))
+              (if-some [[discriminator seqex? optional? sch] (first sub-discriminators)]
+                (let [next-pos (discriminator data pos)]
+                  (log/info :type :cat-seq :optional? optional? :descrim next-pos :item-data (nth data pos) :check sch)
+                  (if (and next-pos (> next-pos pos))
+                    (recur next-pos (rest sub-discriminators))
+                    (if optional?
+                      (recur pos (rest sub-discriminators))
+                      (do
+                        #_(throw (ex-info "missing-required" {:pos pos
+                                                              :fn  (pr-str discriminator)}))
+                        ogpos))))
+                (do (log/info :type :cat-seq
+                              :exhausted true
+                              :descrim pos
+                              :item-data (nth data pos))
+                    (assert false (nth data pos))
+                    pos))
+              pos)
+            ))]
+    (if in-regex?
+      f
+      (fn [data] (pos? (f data 0))))))
 
-(defn -sequential-discriminator [x]
+(defn -sequential-discriminator [x in-regex?]
   (let [children (m/children x)
         _ (assert (= 1 (count children)))
         child (first children)
         ;sub-discriminator (make-tag-discriminator child)
-        sub-discriminator (-xml-discriminator child)]
+        sub-discriminator (-xml-discriminator child false)]
     (fn [data pos]
       (sub-discriminator (first data) nil))))
 
-(defn -map-discriminator [x]
+(defn -map-discriminator [x in-regex?]
   (let [children (m/children x)
         {:keys [xml/value-wrapped xml/in-seq-ex]} (m/properties x)
         required-attrs (transduce
-                            (remove (fn [[_ opts]] (-> opts :optional)))
-                            (fn
-                              ([acc] acc)
-                              ([acc [attribute-name opts subschema]]
-                               (conj acc attribute-name)))
-                            []
-                            children)]
-    (if in-seq-ex
+                         (remove (fn [[_ opts]] (-> opts :optional)))
+                         (fn
+                           ([acc] acc)
+                           ([acc [attribute-name opts subschema]]
+                            (conj acc attribute-name)))
+                         []
+                         children)]
+    (if in-regex?
       (fn [data pos]
-        (prn data pos)
-        (if (map? data)
-          (if (reduce
-                (fn [acc attr]
-                  (if (contains? data attr)
-                    true
-                    (reduced false)))
-                false
-                required-attrs)
-            (inc pos)
-            pos)
+        #_(log/info :data data :pos pos)
+        (if (< pos (count data))
+          (let [item (nth data pos)
+                has-required (reduce
+                               (fn [acc attr]
+                                 (if (contains? item attr)
+                                   true
+                                   (reduced false)))
+                               false
+                               required-attrs)]
+            (log/info :type :map-seq :map? (map? item)
+                      :r
+                      has-required
+                      :item-data item :check x)
+            (if (map? item)
+              (if has-required
+                (inc pos)
+                pos)
+              pos))
           pos))
-      (fn [data pos]
-        (reduce
-          (fn [acc attr]
-            (if (contains? data attr)
-              true
-              (reduced false)))
-          false
-          required-attrs)))))
+      (do (assert (not in-seq-ex))
+          (fn [data]
+            (reduce
+              (fn [acc attr]
+                (if (contains? data attr)
+                  true
+                  (reduced false)))
+              false
+              required-attrs))))))
 
-(defn ^:boolean -xml-discriminator [x]
+(defn -xml-discriminator [x in-regex?]
   (case (m/type x)
-    :schema (-xml-discriminator (m/deref x))
+    :schema (-xml-discriminator (m/deref x) in-regex?)
     :malli.core/schema
-    (-xml-discriminator (m/deref x))
-    :ref (-xml-discriminator (m/deref x))
+    (-xml-discriminator (m/deref x) in-regex?)
+    :ref (-xml-discriminator (m/deref x) in-regex?)
     ;:merge (-xml-discriminator (m/deref x))
-    :map (-map-discriminator x)
+    :map (-map-discriminator x in-regex?)
     ;:string (string-discriminator x)
     ;:re (string-discriminator x)
-    :local-date-time (local-date-time-discriminator x)
-    :offset-date-time (zoned-dateTime-discriminator x)
+    :local-date-time (local-date-time-discriminator x in-regex?)
+    :offset-date-time (zoned-dateTime-discriminator x in-regex?)
     ;:local-date (local-date-discriminator x)
     ;;:re (string-discriminator x)
     ;:enum (string-discriminator x)
     ;:decimal (decimal-discriminator x)
     ;:any (string-discriminator x)
-    :tuple (-tuple-discriminator x)
-    :alt  (-alt-discriminator x)
+    :tuple (-tuple-discriminator x in-regex?)
+    :alt  (-alt-discriminator x in-regex?)
     ;:or  (-or-discriminator x)
     ;:and (-and-discriminator x)
-    :cat (-cat-discriminator x)
-    :sequential (-sequential-discriminator x)
+    :cat (-cat-discriminator x in-regex?)
+    :sequential (-sequential-discriminator x in-regex?)
     ;:boolean (boolean-discriminator x)
-    :? (-regex-discriminator x)
-    :* (-regex-discriminator x)
-    :+ (-regex-discriminator x)
-    :repeat (-regex-discriminator x)
+    :? (-regex-discriminator x in-regex?)
+    :* (-regex-discriminator x in-regex?)
+    :+ (-regex-discriminator x in-regex?)
+    :repeat (-regex-discriminator x in-regex?)
     ;:nil (fn [r]nil )
     ))
 
@@ -251,12 +287,16 @@
 (defn -or-unparser [x]
   (let [children (m/children x)
         subparsers (into []
-                         (map (juxt -xml-discriminator -xml-unparser))
+                         (map (juxt #(-xml-discriminator % false) -xml-unparser))
                          children)]
     (fn [data pos ^XMLStreamWriter w]
       (reduce (fn [acc [discriminator unparser]]
-                (when (discriminator data pos)
-                  (reduced (unparser data nil w))))
+                (let [disc (discriminator data)]
+                  (log/info :type :or :discriminator disc :pos pos :data data)
+                  (when (and disc (if (number? disc)
+                                    (> disc (or pos 0))
+                                    disc))
+                    (reduced (unparser data nil w)))))
               nil
               subparsers))))
 
@@ -267,7 +307,7 @@
         tag (name (first tags))
         child-writer (-xml-unparser (m/deref child))
         ]
-    ;(prn tag child)
+    #_(log/info tag child)
     (fn [data pos ^XMLStreamWriter w]
       (.writeStartElement w tag)
       (when child-writer
@@ -281,16 +321,16 @@
         attribute-writers (transduce
                             (filter (fn [[_ opts]] (-> opts :xml/attr)))
                             (fn
-                              ([acc]acc)
+                              ([acc] acc)
                               ([acc [attribute-name opts subschema]]
-                               (conj acc [attribute-name  (-xml-unparser (m/deref subschema))])))
+                               (conj acc [attribute-name (-xml-unparser (m/deref subschema))])))
                             []
                             children)
         tag-writers (transduce
                       (remove (fn [[_ opts]] (-> opts :xml/attr)))
-                      (fn ([acc]acc)
+                      (fn ([acc] acc)
                         ([acc [tag opts subschema]]
-                         ;(prn (m/form (m/deref subschema)))
+                         #_(log/info :form (m/form (m/deref subschema)))
                          (conj acc (case (-> subschema m/type)
                                      :sequential
                                      (let [subsubschema (m/children subschema)]
@@ -305,7 +345,7 @@
                       children)]
     (if in-seq-ex
       (fn [data pos ^XMLStreamWriter w]
-        ;(prn data pos x)
+        #_(log/info :data data :pos pos)
         (run! (fn [[key subwriter seq?]]
                 (if seq?
                   (doseq [subdata (get data key)]
@@ -351,36 +391,39 @@
 (defn -cat-unparser [x]
   (let [children (m/children x)
         subparsers (into []
-                         (map (juxt -xml-discriminator -xml-unparser seqex? seqex-optional? identity))
+                         (map (juxt #(-xml-discriminator % true) -xml-unparser seqex? seqex-optional? identity))
                          children)]
-    (fn [data pos ^XMLStreamWriter w]
-      (loop [pos (or pos 0) subparsers subparsers]
-        #_(when (nil? pos)
-          (prn data ))
-        (if (< pos (count data))
-          (if-some [[discriminator unparser seqex? optional? sch] (first subparsers)]
-            (do                                             ;(prn pos (nth data pos) sch)
+    (fn [data ogpos ^XMLStreamWriter w]
+      (let [ogpos (or ogpos 0)]
+        (loop [pos ogpos subparsers subparsers]
+          #_(when (nil? pos)
+              (log/info data))
+          (if (< pos (count data))
+            (if-some [[discriminator unparser seqex? optional? sch] (first subparsers)]
+              (do                                           ; (log/info pos (nth data pos) sch)
                 (if seqex?
                   (let [progress (discriminator data pos)]
                     (if (> progress pos)
                       (recur (unparser data pos w) (rest subparsers))
                       (if optional?
                         (recur pos (rest subparsers))
-                        (assert false (pr-str data sch)))))
+                        (do (assert (> pos ogpos) (pr-str data sch))
+                            pos))))
                   (let [item-data (nth data pos)]
-                     (prn :check item-data  sch)
+                    (log/info :check item-data :sch sch)
                     (if (discriminator item-data nil)
                       (do
-                        (prn :disc item-data sch)
+                        ;  (log/info :disc item-data sch)
                         (unparser item-data nil w)
                         (recur (inc pos) (rest subparsers)))
                       (if optional?
                         (recur pos (rest subparsers))
-                        (assert false (pr-str item-data sch)))))))
-            (do (assert false (pr-str [pos (drop pos data)]))
-                pos))
-          pos)
-        ))))
+                        (do (assert (> pos ogpos) (pr-str item-data sch))
+                            pos))))))
+              (do (assert false (pr-str [pos (drop pos data)]))
+                  pos))
+            pos)
+          )))))
 
 (defn string-encode-unparser [x]
   (let [encoder (m/encoder x transform/string-transformer)]
@@ -396,25 +439,25 @@
 (defn -alt-unparser [x]
   (let [children (m/children x)
         subparsers (into []
-                         (map (juxt -xml-discriminator -xml-unparser seqex? seqex-optional? identity))
+                         (map (juxt #(-xml-discriminator % true) -xml-unparser seqex? seqex-optional? identity))
                          children)]
     (fn [data pos ^XMLStreamWriter w]
       (let [pos (or pos 0)]
         (doto (reduce (fn [acc [discriminator unparser seqex? ?optional sch]]
                         (if seqex?
                           (let [progress (discriminator data pos)]
-                            (prn :seq progress data pos sch )
+                            (log/info :type :seq progress data pos sch)
                             (if (> progress pos)
                               (let [x (unparser data pos w)]
                                 (assert (> x pos) (pr-str pos sch data))
-                                (prn :alt x)
+                                (log/info :alt x)
                                 (reduced x))
                               pos))
                           (let [subdata (nth data pos)]
-                            (prn :not-seqex subdata pos sch)
+                            (log/info :not-seqex subdata pos sch)
                             (if (discriminator subdata nil)
                               (let [x (unparser subdata nil w)]
-                                (prn :alt x sch )
+                                (log/info :type :alt x sch)
                                 (reduced (inc pos)))
                               false))))
                       pos
@@ -455,33 +498,35 @@
   (let [children (m/children x)
         _ (assert (= 1 (count children)))
         child (first children)
-        discriminator (-xml-discriminator child)
-        unparser      (-xml-unparser child)
-        seqex?       (seqex? child)
-        optional?     (seqex-optional? child)
+        discriminator (-xml-discriminator child true)
+        unparser (-xml-unparser child)
+        seqex? (seqex? child)
+        optional? (seqex-optional? child)
         sch child]
-    (fn [data pos ^XMLStreamWriter w]
-      (loop [pos (or pos 0)]
-        (if (< pos (count data))
-          (if seqex?
-            (let [progress (discriminator data pos)]
-              (if (> progress pos)
-                (let [next-pos (unparser data pos w)]
-                  (assert next-pos (pr-str pos sch data))
-                  (assert (> next-pos pos) (pr-str pos sch data))
-                  (recur next-pos))
-                (if optional?
-                  pos
-                  (assert false (pr-str data sch)))))
-            (let [item-data (nth data pos)]
-              ; (prn item-data :check sch)
-              (if (discriminator item-data nil)
-                (do (unparser item-data pos w)
-                    (recur (inc pos)))
-                (if optional?
-                  pos
-                  (assert false (pr-str item-data sch))))))
-          pos)))))
+    (fn [data ogpos ^XMLStreamWriter w]
+      (let [ogpos (or ogpos 0)]
+        (loop [pos ogpos]
+          (if (< pos (count data))
+            (if seqex?
+              (let [progress (discriminator data pos)]
+                (if (> progress pos)
+                  (let [next-pos (unparser data pos w)]
+                    (assert next-pos (pr-str pos sch data))
+                    (assert (> next-pos pos) (pr-str pos sch data))
+                    (recur next-pos))
+                  (if optional?
+                    pos
+                    (do (assert (> pos ogpos) (pr-str data sch))
+                        pos))))
+              (let [item-data (nth data pos)]
+                ; (log/info :item-data item-data :check sch)
+                (if (discriminator item-data nil)
+                  (do (unparser item-data pos w)
+                      (recur (inc pos)))
+                  (if optional?
+                    pos
+                    (assert false (pr-str item-data sch))))))
+            pos))))))
 
 (defn -xml-unparser [x]
   (case (m/type x)
@@ -517,8 +562,8 @@
     :decimal (string-encode-unparser x)
     :any (string-unparser x)
     :tuple (-tuple-unparser x)
-    :alt  (-alt-unparser x)
-    :or  (-or-unparser x)
+    :alt (-alt-unparser x)
+    :or (-or-unparser x)
     :and (-and-unparser x)
     :cat (-cat-unparser x)
     :sequential (-sequential-unparser x)
