@@ -638,7 +638,7 @@
    (fn [data]
      (with-open [s (StringWriter.)]
        (with-open [w ^XMLStreamWriter (make-stream-writer options s)]
-         (.writeStartDocument w "utf-8" "1.0")
+         (.writeStartDocument w "UTF-8" "1.0")
          (f data nil w)
          (.writeEndDocument w))
        (str s)))))
