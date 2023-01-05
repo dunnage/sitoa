@@ -22,7 +22,8 @@
           :else (throw (IllegalArgumentException.
                          "source should be java.io.Reader or java.io.OutputStream")))
         (:indent props)
-        (IndentingXMLStreamWriter.)))))
+        (-> (IndentingXMLStreamWriter.)
+            (doto (.setIndentStep "    ")))))))
 
 (defn sink [s]
   (io/writer s))
