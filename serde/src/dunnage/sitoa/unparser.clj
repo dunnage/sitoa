@@ -200,8 +200,14 @@
         child (first children)
         ;sub-discriminator (make-tag-discriminator child)
         sub-discriminator (-xml-discriminator child false)]
-    (fn [data pos]
-      (sub-discriminator (first data) nil))))
+    (if in-regex?
+      (throw (ex-info "cannot have sequencial in sequence expression"
+                      {:schema x
+                       :sub-schem child}))
+      #_(fn [data pos]
+        (sub-discriminator (first data) nil))
+      (fn [data]
+        (sub-discriminator (first data))))))
 
 (defn -map-discriminator [x in-regex?]
   (let [children (m/children x)
@@ -301,7 +307,7 @@
 (defn -or-unparser [x in-regex?]
   (let [children (m/children x)
         subparsers (into []
-                         (map (juxt #(-xml-discriminator % false) #(-xml-unparser % false)))
+                         (map (juxt #(-xml-discriminator % false) #(-xml-unparser % false) identity))
                          children)]
     (if in-regex?
       (fn [data pos ^XMLStreamWriter w]
@@ -314,7 +320,7 @@
                 pos
                 subparsers))
       (fn [data ^XMLStreamWriter w]
-        (reduce (fn [acc [discriminator unparser]]
+        (reduce (fn [acc [discriminator unparser _sche]]
                   (let [disc (discriminator data)]
                     (log/info :type :or :discriminator disc  :data data)
                     (when disc
@@ -524,7 +530,7 @@
         (inc pos))
       (fn [data ^XMLStreamWriter w]
         (reduce (fn [acc item]
-                  (sub-unparser item nil w))
+                  (sub-unparser item w))
                 []
                 data)))))
 
