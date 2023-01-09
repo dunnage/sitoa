@@ -207,16 +207,25 @@
 
 (defn make-formatter []
   (-> (new DateTimeFormatterBuilder)
-      (.appendPattern "yyyy-MM-dd'T'HH:mm:ss[[.SSSSSS][XXXXX][.SSSSSSXXXXX]]")
+      ;(.appendPattern "yyyy-MM-dd'T'HH:mm:ss[[.SSSSSS][XXXXX][.SSSSSSXXXXX]]")
       ;(.appendPattern "yyyy-MM-dd'T'HH:mm:ss[[.SSSSSSSSS][XXXXX][.SSSSSSSSSXXXXX]]")
       ;(.appendPattern "yyyy-MM-dd'T'HH:mm:ss[.][XXXXX]")
-      ;(.optionalStart)
+      (.appendPattern "yyyy-MM-dd'T'HH:mm:ss")
+      (.optionalStart)
       ;(.appendLiteral ".")
-      ;(.appendFraction ChronoField/NANO_OF_SECOND, 0, 9, true)
-      ;(.optionalEnd)
+      (.appendFraction ChronoField/NANO_OF_SECOND, 1, 9, true)
+      (.optionalEnd)
       ; (.appendPattern "[XXXXX]")
       ; (.appendPattern "[[.SSSSSS][.SSSSSSSSS]")
-      ;(.appendOffset "+HH:mm" "Z")
+      (.optionalStart)
+      (.appendOffset "+HH:MM:ss" "Z")
+      (.optionalEnd)
+
+      (.optionalStart)
+      ;(.appendLiteral ".")
+      (.appendFraction ChronoField/NANO_OF_SECOND, 0, 9, true)
+      (.appendOffset "+HH:MM:ss" "Z")
+      (.optionalEnd)
       (.parseDefaulting ChronoField/NANO_OF_SECOND 0)
       (.parseDefaulting ChronoField/OFFSET_SECONDS 0)
 
@@ -751,9 +760,9 @@
                         "2007-12-03T10:15:30Z",
                         "2016-03-02T17:09:55",
                         "2016-03-02T17:09:55Z"
-                        ;"2022-10-26T21:08:15.258598"
-                        ;"2022-10-26T21:08:15.258598Z"
-                        ;"2022-10-26T21:08:15.2585981"
+                        "2022-10-26T21:08:15.258598"
+                        "2022-10-26T21:08:15.258598Z"
+                        "2022-10-26T21:08:15.2585981"
                         "2022-10-26T21:08:15.258598+01:00"
                         ])
   (into [] (map (fn [txt]  (OffsetDateTime/parse txt (make-formatter)))) offset-patterns)
