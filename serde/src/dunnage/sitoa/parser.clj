@@ -6,11 +6,12 @@
            )
   (:import
     (java.io InputStream Reader StringReader)
+    (java.time.temporal ChronoField)
     (javax.xml.stream
       XMLInputFactory XMLStreamReader XMLStreamConstants)
     (clojure.lang IReduceInit MapEntry ITransientCollection)
     (java.time LocalDate LocalDateTime OffsetDateTime ZonedDateTime LocalTime)
-    (java.time.format DateTimeParseException)
+    (java.time.format DateTimeFormatter DateTimeFormatterBuilder DateTimeParseException)
     (java.nio.file Files Path)))
 
 (def ^:dynamic *ref-parsers* false)
@@ -204,12 +205,30 @@
         (catch DateTimeParseException e
           (ZonedDateTime/parse txt))))))
 
-(defn zoned-date-time-parser [x]
+(defn make-formatter []
+  (-> (new DateTimeFormatterBuilder)
+      (.appendPattern "yyyy-MM-dd'T'HH:mm:ss[[.SSSSSS][XXXXX][.SSSSSSXXXXX]]")
+      ;(.appendPattern "yyyy-MM-dd'T'HH:mm:ss[[.SSSSSSSSS][XXXXX][.SSSSSSSSSXXXXX]]")
+      ;(.appendPattern "yyyy-MM-dd'T'HH:mm:ss[.][XXXXX]")
+      ;(.optionalStart)
+      ;(.appendLiteral ".")
+      ;(.appendFraction ChronoField/NANO_OF_SECOND, 0, 9, true)
+      ;(.optionalEnd)
+      ; (.appendPattern "[XXXXX]")
+      ; (.appendPattern "[[.SSSSSS][.SSSSSSSSS]")
+      ;(.appendOffset "+HH:mm" "Z")
+      (.parseDefaulting ChronoField/NANO_OF_SECOND 0)
+      (.parseDefaulting ChronoField/OFFSET_SECONDS 0)
+
+      (.toFormatter)))
+(defn offset-date-time-parser [x]
   (fn [^XMLStreamReader r]
+    (log/info :type :offset-date-time-parser
+              :debug (debug-element r))
     (let [txt (.getElementText r)]
       ;(safe-exit-tag r)
       ;(log/info :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
-      (OffsetDateTime/parse txt))))
+      (OffsetDateTime/parse txt  (make-formatter)))))
 
 (defn decimal-parser [x]
   (fn [^XMLStreamReader r]
@@ -574,14 +593,22 @@
   (let [[enum sub :as tuple-children] (m/children x)
         _ (assert (= 2 (count tuple-children)))
         schema-tag (tag-enum-tag enum)
+        ;wrap?       (case (-> sub m/deref-all m/type)
+        ;              (:alt :cat :or) true
+        ;              false)
         subparser (case (-> sub m/deref-all m/type)
                     (:alt :cat :or) (wrap-next-before-tag (-xml-parser sub))
                     (-xml-parser sub))]
     (fn [^XMLStreamReader r]
       (let [tagk (get-tag-kw r)
             _    (assert (= schema-tag tagk) (debug-element r))
-            _    (log/info :tuple schema-tag :tagk tagk :parse (debug-element r))
+            _ (log/info :tuple schema-tag :tagk tagk        ;:wrap? wrap?
+                        :parse (debug-element r)
+                        ; :sub sub :derefed (-> sub m/deref-all)
+                        ;:subparser subparser
+                        )
             toreturn [tagk (subparser r)]]
+        ;  (log/info :type :tuple :toreturn toreturn :debug   (debug-element r))
         ((safe-exit-tag tagk) r)
         (log/info :tuple toreturn :before-return (debug-element r))
         ;(skip-closing-and-charactors r)
@@ -656,6 +683,7 @@
   (let [child (nth (m/children x) 0)
         refparsers *ref-parsers*]
     (fn [^XMLStreamReader r]
+      (log/info :type :refparser :child child :debug  (debug-element r))
       ((get @refparsers child) r))))
 
 (defn -xml-parser [x]
@@ -666,7 +694,7 @@
       ;(log/info x)
       (case (m/form x)
         :org.w3.www.2001.XMLSchema/dateTime
-        (zoned-date-time-parser x)
+        (offset-date-time-parser x)
         (-xml-parser (m/deref x))))
     :ref (ref-parser x)                                     ; (-xml-parser (m/deref x))
     :merge (-xml-parser (m/deref x))
@@ -674,7 +702,7 @@
     :string (string-parser x)
     :re (string-parser x)
     :local-date-time (local-date-time-parser x)
-    :offset-date-time (zoned-date-time-parser x)
+    :offset-date-time (offset-date-time-parser x)
     :local-date (local-date-parser x)
     :local-time (local-time-parser x)
     ;:re (string-parser x)
@@ -717,3 +745,17 @@
 
    #_(m/-cached (m/schema ?schema options) :xml-parser -xml-parser)))
 
+
+(comment
+  (def offset-patterns ["2007-12-03T10:15:30+01:00",
+                        "2007-12-03T10:15:30Z",
+                        "2016-03-02T17:09:55",
+                        "2016-03-02T17:09:55Z"
+                        ;"2022-10-26T21:08:15.258598"
+                        ;"2022-10-26T21:08:15.258598Z"
+                        ;"2022-10-26T21:08:15.2585981"
+                        "2022-10-26T21:08:15.258598+01:00"
+                        ])
+  (into [] (map (fn [txt]  (OffsetDateTime/parse txt (make-formatter)))) offset-patterns)
+
+  )
