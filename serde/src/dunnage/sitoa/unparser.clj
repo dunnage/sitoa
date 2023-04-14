@@ -3,6 +3,7 @@
             [net.cgrand.xforms :as xforms]
             [malli.core :as m]
             [io.pedestal.log :as log]
+            [malli.experimental.time.transform :as mett]
             [malli.transform :as transform])
   (:import
     (java.io OutputStream Writer StringWriter)
@@ -10,6 +11,8 @@
       XMLOutputFactory XMLStreamWriter XMLStreamConstants)
     (com.sun.xml.txw2.output IndentingXMLStreamWriter)
     (java.time OffsetDateTime LocalDateTime LocalDate)))
+
+(def full-string-transformer (transform/transformer transform/string-transformer mett/time-transformer))
 
 
 (defn make-stream-writer [props source]
@@ -468,7 +471,7 @@
           consumed)))))
 
 (defn string-encode-unparser [x in-regex?]
-  (let [encoder (m/encoder x transform/string-transformer)]
+  (let [encoder (m/encoder x full-string-transformer)]
     (if in-regex?
       (fn [data pos ^XMLStreamWriter w]
         (.writeCharacters w (encoder data))
