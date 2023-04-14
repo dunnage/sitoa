@@ -5987,7 +5987,7 @@
                                                     [:enum
                                                      "##defined"
                                                      "##definedSibling"]]],
-             :org.w3.www.2001.XMLSchema/time :local-time,
+             :org.w3.www.2001.XMLSchema/time :time/local-time,
              :org.w3.www.2001.XMLSchema/nonPositiveInteger :org.w3.www.2001.XMLSchema/decimal,
              :org.w3.www.2001.XMLSchema/ENTITY :string,
              :org.w3.www.2001.XMLSchema/localSimpleType-seq [:map
@@ -7968,7 +7968,7 @@
              :org.w3.www.2001.XMLSchema/IDREF :string,
              :org.w3.www.2001.XMLSchema/dateTime [:or
                                                   :offset-date-time
-                                                  :local-date-time],
+                                                  :time/local-date-time],
              :org.w3.www.2001.XMLSchema/attributeGroup-seq [:map
                                                             {:xml/value-wrapped true}
                                                             [:ref
@@ -8277,7 +8277,7 @@
                                                                      [:value
                                                                       {}
                                                                       :any]]]]]]]],
-             :org.w3.www.2001.XMLSchema/date :local-date,
+             :org.w3.www.2001.XMLSchema/date :time/local-date,
              :org.w3.www.2001.XMLSchema/extensionType-seq [:map
                                                            {:xml/value-wrapped true}
                                                            [:base
