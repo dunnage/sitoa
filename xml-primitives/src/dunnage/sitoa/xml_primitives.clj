@@ -4,6 +4,7 @@
             [malli.transform :as mt]
             [malli.util :as mu]
             [com.breezeehr.malli-java-time :as mjt]
+            [malli.experimental.time]
             com.breezeehr.java-time-printing)
   (:import (java.time LocalDateTime LocalDate LocalTime OffsetDateTime ZoneId ZoneOffset)))
 
@@ -19,17 +20,13 @@
   {:decimal         (m/-simple-schema {:type          :decimal,
                                        :pred          decimal?
                                        :decode/string -string->bigdec
-                                       :encode/string mt/-any->string})
-   :local-date mjt/local-date
-   :local-date-time mjt/local-date-time
-   :zoned-date-time mjt/zoned-date-time
-   :local-time mjt/local-time
-   :offset-date-time mjt/offset-date-time})
+                                       :encode/string mt/-any->string})})
 
 (def external-registry {:registry (merge
                                     (m/default-schemas)
                                     (mu/schemas)
-                                    xmlschema-custom)})
+                                    xmlschema-custom
+                                    (malli.experimental.time/schemas))})
 (def xmlschema-registry
   {
    :org.w3.www.2001.XMLSchema/QName              :string ;javax.xml.namespace.QName
@@ -41,9 +38,9 @@
    :org.w3.www.2001.XMLSchema/boolean            :boolean ;(do (onlywhitespacefacet x) [:boolean {}]) ;"boolean, java.lang.Boolean"
    :org.w3.www.2001.XMLSchema/base64Binary       :any ;(m/-simple-schema {:type :bytes, :pred bytes?}) ;byte[]
    :org.w3.www.2001.XMLSchema/hexBinary          :any ;(m/-simple-schema {:type :bytes, :pred bytes?}) ;byte[]
-   :org.w3.www.2001.XMLSchema/date,              :local-date ;javax.xml.datatype.XMLGregorianCalendar
-   :org.w3.www.2001.XMLSchema/dateTime,          :offset-date-time ;javax.xml.datatype.XMLGregorianCalendar
-   :org.w3.www.2001.XMLSchema/time,              :local-time ;javax.xml.datatype.XMLGregorianCalendar
+   :org.w3.www.2001.XMLSchema/date,              :time/local-date ;javax.xml.datatype.XMLGregorianCalendar
+   :org.w3.www.2001.XMLSchema/dateTime,          :time/offset-date-time ;javax.xml.datatype.XMLGregorianCalendar
+   :org.w3.www.2001.XMLSchema/time,              :time/local-time ;javax.xml.datatype.XMLGregorianCalendar
    :org.w3.www.2001.XMLSchema/duration           :any ;javax.xml.datatype.Duration
    :org.w3.www.2001.XMLSchema/dayTimeDuration    :any ;javax.xml.datatype.Duration
    :org.w3.www.2001.XMLSchema/yearMonthDuration  :any ;javax.xml.datatype.Duration

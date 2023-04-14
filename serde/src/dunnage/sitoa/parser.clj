@@ -1,9 +1,7 @@
 (ns dunnage.sitoa.parser
   (:require [clojure.java.io :as io]
-
             [malli.core :as m]
-            [io.pedestal.log :as log]
-           )
+            [io.pedestal.log :as log])
   (:import
     (java.io InputStream Reader StringReader)
     (java.time.temporal ChronoField)
@@ -232,7 +230,7 @@
       (.toFormatter)))
 (defn offset-date-time-parser [x]
   (fn [^XMLStreamReader r]
-    (log/info :type :offset-date-time-parser
+    (log/info :type :time/offset-date-time-parser
               :debug (debug-element r))
     (let [txt (.getElementText r)]
       ;(safe-exit-tag r)
@@ -460,7 +458,7 @@
     (:? :*  :+  :repeat :sequential) (make-tag-discriminator (-single-sub-item x))
     :map (-map-discriminator x)
     :merge  (-alt-discriminator x)
-    (:string :offset-date-time :local-date :local-date-time :enum :re :decimal) nil #_(do #{allways-true-discriminator})
+    (:string :time/offset-date-time :time/local-date :time/local-date-time :enum :re :decimal) nil #_(do #{allways-true-discriminator})
     ;:any (string-parser x)
     :tuple (-tuple-discriminator x)
     :alt  (-alt-discriminator x)
@@ -710,10 +708,10 @@
     :map (-map-parser x)
     :string (string-parser x)
     :re (string-parser x)
-    :local-date-time (local-date-time-parser x)
-    :offset-date-time (offset-date-time-parser x)
-    :local-date (local-date-parser x)
-    :local-time (local-time-parser x)
+    :time/local-date-time (local-date-time-parser x)
+    :time/offset-date-time (offset-date-time-parser x)
+    :time/local-date (local-date-parser x)
+    :time/local-time (local-time-parser x)
     ;:re (string-parser x)
     :enum (string-parser x)
     :decimal (decimal-parser x)

@@ -23,12 +23,7 @@
 (def fop-parser (xml-parser fop-schema))
 (comment
   (def message-schema (m/schema (schema/xds->registry {:default-ns "script"} (io/resource "NCPDP_20170715/transport.xsd"))
-                                {:registry (merge
-                                             (m/default-schemas)
-                                             (mu/schemas)
-                                             xml-primitives/xmlschema-custom)}
-
-                                ))
+                                {:registry xml-primitives/external-registry}))
   (m/options message-schema)
 
   (def p (xml-parser  message-schema))
@@ -48,19 +43,11 @@
 
   (def xsd-parser (xml-parser
                     (m/schema (schema/xds->registry {:default-ns "xs"} (io/resource "XMLSchema.xsd"))
-                              {:registry (merge
-                                           (m/default-schemas)
-                                           (mu/schemas)
-                                           xml-primitives/xmlschema-custom)}
+                              {:registry xml-primitives/external-registry}
 
                               )))
   (def xsd-parser (let [xsd (m/schema (schema/xds->registry {:default-ns "xs"} (io/resource "XMLSchema.xsd"))
-                                      {:registry (merge
-                                                   (m/default-schemas)
-                                                   (mu/schemas)
-                                                   xml-primitives/xmlschema-custom)}
-
-                                      )]
+                                      {:registry xml-primitives/external-registry})]
                     (xml-parser
                       (m/-set-children xsd (-> xsd m/children first m/children first vector)))))
   (def parsed (with-open [s (source (io/resource "XMLSchema.xsd"))]
