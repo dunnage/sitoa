@@ -1,7 +1,8 @@
 (ns dunnage.sitoa.parser
   (:require [clojure.java.io :as io]
             [malli.core :as m]
-            [io.pedestal.log :as log])
+            [io.pedestal.log :as log]
+            [malli.util :as mu])
   (:import
     (java.io InputStream Reader StringReader)
     (java.time.temporal ChronoField)
@@ -300,7 +301,7 @@
                  val
                  ;(recur (.getEventType r) val)
                  )
-               (do (log/info :leave-start-next tagk)
+               (do (log/info :leave-start-next tagk :nexttagk nexttagk)
                    val)))
 
            2                                                ;END_ELEMENT
@@ -371,7 +372,7 @@
                    (fn [acc entry]
                      (if-some [attr-parser (get attribute-parsers (key entry))]
                        (conj! acc (attr-parser entry))
-                       (do (log/info :skip entry)
+                       (do (log/info :skip entry :attribute-parsers (keys attribute-parsers))
                            acc)))
                    (transient {})
                    (attribute-reducible r))
@@ -629,7 +630,8 @@
 
 (defn -sequential-parser [sequence-tag x]
   (let [children (m/children x)
-        _    (assert (= 1 (count children)))
+        _    (when-not (= 1 (count children))
+               (throw (ex-info "sequential should have one child" {:got children})))
         child (first children)
         ;sub-discriminator (make-tag-discriminator child)
         sub-parser (case (-> child m/deref-all m/type)
@@ -643,6 +645,7 @@
             (log/info :-sequential-parser tagk :?= sequence-tag)
             (if (= sequence-tag tagk)
               (let [v (sub-parser r)]
+                (prn v)
                 (log/info :-sequential-parser tagk (debug-element r) v)
                 (recur (safe-next-tag r) (conj! acc v)))
               (not-empty (persistent! acc))))
@@ -676,7 +679,8 @@
                                                  (conj! acc v))))
               (do (.getEventType r)
                   (not-empty (persistent! acc)))))
-          (not-empty (persistent! acc)))))))
+          (do (.getEventType r)
+              (not-empty (persistent! acc))))))))
 
 (defn get-first-tag [parser]
   (fn [^XMLStreamReader r]
@@ -692,6 +696,44 @@
     (fn [^XMLStreamReader r]
       (log/info :type :refparser :child child :debug  (debug-element r))
       ((get @refparsers child) r))))
+
+(defn simplify-reduce
+  ([] nil)
+  ([acc] acc)
+  ([acc item]
+   (if (nil? acc)
+     item
+     (case [(m/type acc) (m/type item)]
+       [:re :string] acc
+       [:enum :re] acc                                      ;should filter enum items by regex
+       [:enum :enum] (doto (m/schema
+                             (into [:enum]
+                                   (clojure.set/intersection
+                                     (into #{} (m/children acc))
+                                     (into #{} (m/children item)))))
+                       prn)
+
+       ))))
+(defn simplify [schema]
+  (case (m/type schema)
+    :and
+    (->> schema
+         m/children
+         (transduce
+           (map
+             (fn [x]
+               (cond
+                 (keyword? x)
+                 (m/deref-all x)
+                 (m/schema? x)
+                 (-> x m/deref simplify)
+                 :default x)
+               ))
+           simplify-reduce))
+
+    :malli.core/schema (recur (m/deref schema))
+    (:enum :re :string) schema
+    ))
 
 (defn -xml-parser [x]
   (case (m/type x)
@@ -726,8 +768,13 @@
                       t (m/type tuplechild)
                       key (-> tuplechild m/children first)
                       keyvalue (-> key m/children first)]
-                  (assert (= t :tuple))
-                  (-sequential-parser keyvalue x))
+                  (case t
+                    :tuple (-sequential-parser keyvalue x)
+                    :or (do
+                          (prn x)
+                          (-sequential-parser keyvalue x))
+                    :and (let [s (simplify tuplechild)]
+                           (-sequential-parser keyvalue (mu/assoc x 0 s)))))
     :boolean (boolean-parser x)
     :? (-regex-parser x)
     :* (-regex-parser x)

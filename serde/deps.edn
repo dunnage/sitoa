@@ -12,6 +12,7 @@
  {:build {:deps       {io.github.seancorfield/build-clj
                        {:git/tag "v0.6.3" :git/sha "9b8e09b"}}
           :ns-default build}
-  :dev   {:extra-paths ["dev-resources"]}
+  :dev   {:extra-paths ["dev-resources"]
+          :extra-deps  {ch.qos.logback/logback-classic {:mvn/version "1.4.3"}}}
   :test  {:extra-paths ["test"]
           :extra-deps  {org.clojure/test.check {:mvn/version "1.1.1"}}}}}

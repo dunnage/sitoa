@@ -10,18 +10,20 @@
             [clojure.tools.reader.edn :as edn])
   (:import (java.io PushbackReader)))
 
-(def xsd-schema (m/schema (with-open [r (PushbackReader. (io/reader (io/resource "xsd-schema.edn")))]
-                            (edn/read r))
-                          xml-primitives/external-registry))
 
-(def xsd-parser (xml-parser xsd-schema))
-
-(def fop-schema (m/schema (with-open [r (PushbackReader. (io/reader (io/resource "fop-schema.edn")))]
-                            (edn/read r))
-                          xml-primitives/external-registry))
-
-(def fop-parser (xml-parser fop-schema))
 (comment
+
+  (def xsd-schema (m/schema (with-open [r (PushbackReader. (io/reader (io/resource "xsd-schema.edn")))]
+                              (edn/read r))
+                            xml-primitives/external-registry))
+
+  (def xsd-parser (xml-parser xsd-schema))
+
+  (def fop-schema (m/schema (with-open [r (PushbackReader. (io/reader (io/resource "fop-schema.edn")))]
+                              (edn/read r))
+                            xml-primitives/external-registry))
+
+  (def fop-parser (xml-parser fop-schema))
   (def message-schema (m/schema (schema/xds->registry {:default-ns "script"} (io/resource "NCPDP_20170715/transport.xsd"))
                                 {:registry xml-primitives/external-registry}))
   (m/options message-schema)
