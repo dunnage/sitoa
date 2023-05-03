@@ -7967,7 +7967,7 @@
                                                                "extension"]]],
              :org.w3.www.2001.XMLSchema/IDREF :string,
              :org.w3.www.2001.XMLSchema/dateTime [:or
-                                                  :offset-date-time
+                                                  :time/offset-date-time
                                                   :time/local-date-time],
              :org.w3.www.2001.XMLSchema/attributeGroup-seq [:map
                                                             {:xml/value-wrapped true}
