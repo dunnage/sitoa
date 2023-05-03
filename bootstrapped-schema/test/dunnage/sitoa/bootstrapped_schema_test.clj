@@ -8,6 +8,7 @@
             [malli.generator :as mg]))
 
 (comment
+  (set! *print-namespace-maps* false)
   (xsd->schema {:default-ns "xsd"} (io/resource "XMLSchema.xsd"))
   (xsd->schema {:default-ns "fop"} (io/resource "fop.xsd"))
 
