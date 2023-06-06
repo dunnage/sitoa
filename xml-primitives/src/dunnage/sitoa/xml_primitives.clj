@@ -20,8 +20,9 @@
 (def xmlschema-custom
   {:decimal         (m/-simple-schema {:type          :decimal,
                                        :pred          decimal?
-                                       :decode/string -string->bigdec
-                                       :encode/string mt/-any->string})})
+                                       :type-properties
+                                       {:decode/string -string->bigdec
+                                        :encode/string mt/-any->string}})})
 
 (def external-registry {:registry (merge
                                     (m/default-schemas)
