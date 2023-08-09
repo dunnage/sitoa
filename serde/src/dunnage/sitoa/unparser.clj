@@ -12,6 +12,7 @@
     (com.sun.xml.txw2.output IndentingXMLStreamWriter)
     (java.time OffsetDateTime LocalDateTime LocalDate)))
 
+(set! *warn-on-reflection* true)
 (def full-string-transformer (transform/transformer transform/string-transformer mett/time-transformer))
 
 

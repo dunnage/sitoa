@@ -13,6 +13,7 @@
     (java.time.format DateTimeFormatter DateTimeFormatterBuilder DateTimeParseException)
     (java.nio.file Files Path)))
 
+(set! *warn-on-reflection* true)
 (def ^:dynamic *ref-parsers* false)
 (def ^:dynamic *ref-parsers-in-seq* false)
 
@@ -55,7 +56,7 @@
   (let [tag (.getLocalName r)]
     (keyword tag)))
 
-(defn safe-next-tag [^XMLStreamReader r]
+(defn safe-next-tag ^long [^XMLStreamReader r]
   (when (.hasNext r)
     (loop [tok (.next r)]
       ;(log/info tok)
