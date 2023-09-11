@@ -646,7 +646,7 @@
             (log/info :-sequential-parser tagk :?= sequence-tag)
             (if (= sequence-tag tagk)
               (let [v (sub-parser r)]
-                (prn v)
+                ;(prn v)
                 (log/info :-sequential-parser tagk (debug-element r) v)
                 (recur (safe-next-tag r) (conj! acc v)))
               (not-empty (persistent! acc))))
@@ -772,7 +772,7 @@
                   (case t
                     :tuple (-sequential-parser keyvalue x)
                     :or (do
-                          (prn x)
+                          ;(prn x)
                           (-sequential-parser keyvalue x))
                     :and (let [s (simplify tuplechild)]
                            (-sequential-parser keyvalue (mu/assoc x 0 s)))))
