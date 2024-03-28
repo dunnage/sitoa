@@ -1,5 +1,5 @@
 {:paths ["src" "resources"]
- :deps  {org.clojure/clojure                    {:mvn/version "1.11.1"}
+ :deps  {org.clojure/clojure                    {:mvn/version "1.11.2"}
          metosin/malli                          {:mvn/version "0.14.0"}
          com.gfredericks/test.chuck             {:mvn/version "0.2.13"}
          ;; https://mvnrepository.com/artifact/org.glassfish.jaxb/xsom
