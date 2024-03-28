@@ -1,5 +1,5 @@
 {:paths ["src" "resources"]
- :deps  {org.clojure/clojure                 {:mvn/version "1.11.1"}
+ :deps  {org.clojure/clojure                 {:mvn/version "1.11.2"}
          metosin/malli                       {:mvn/version "0.14.0"}
          io.github.Breezeemr/malli-java-time {:sha "c9a03b115f7da61d483a90a882d7e0e353af15c6"}
          com.gfredericks/test.chuck          {:mvn/version "0.2.13"}}
