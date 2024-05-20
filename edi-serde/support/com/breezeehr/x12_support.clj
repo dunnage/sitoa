@@ -32,20 +32,26 @@
 
 (defn make-process-element [spec]
 
-  (fn [segment {segid "Segment ID"
-                seq "Sequence" :as element}]
-    [(format "%s%02d" segid seq )
-     (case (get element "Data Element Type")
-       "ID" [:enum :temp]
-       "AN" [:string {:min (get element "Minimum Length")
-                      :max (get element "Maximum Length")}]
-       "DT" :time/local-date
-       "TM" :time/local-time
-       "R"  [decimal?]
-       "N0" :any
-       "N2" :any
-       "Compostite" [:map]
-       nil :any)]))
+  (let [elements (get spec :elements)]
+    (fn inner-make-process-element [segment {segid "Segment ID"
+                                             compid "Composite Data Element Number"
+                                             seq   "Sequence" :as element}]
+      [(if segid
+         (format "%s%02d" segid seq)
+         (format "%s-%02d" compid seq))
+       (case (get element "Data Element Type")
+         "ID" [:enum :temp]
+         "AN" [:string {:min (get element "Minimum Length")
+                        :max (get element "Maximum Length")}]
+         "DT" :time/local-date
+         "TM" :time/local-time
+         "R" [decimal?]
+         "N0" :int
+         "N2" :int
+         "Compostite" (into [:map]
+                            (keep (fn [subitem]
+                                    (inner-make-process-element segment (into subitem (get elements (str (get subitem "Data Element Number")))))))
+                            (ds/mapseq-reader (get element "items"))))])))
 
 (defn process-segment [spec]
   (let [context (get spec "CONTEXT.TXT")
@@ -59,13 +65,34 @@
       (let [els (-> (ds/filter segment-detail (fn [y]
                                                 (= (get x "Segment ID")
                                                    (get y "Segment ID"))))
+                    (ds/sort-by-column "Sequence"))
+            ctx (-> (ds/filter context (fn [y]
+                                         (and (= (get x "Area")
+                                                 (get y "Area"))
+                                              (= (get x "Sequence")
+                                                 (get y "Sequence"))
+                                              (= "A"
+                                                 (get y "Note Type"))
+                                              (= "B"
+                                                 (get y "Record Type")))
+                                         ))
                     (ds/sort-by-column "Sequence"))]
-        [segid
+        ;(prn ctx)
+        [(if-some [seg-name (xforms/some (keep (fn [{x "Note"}] x)) (-> ctx ds/mapseq-reader))]
+           (-> seg-name
+               (clojure.string/replace #"/|," "")
+               (clojure.string/split #"\s")
+               (->>
+                 (mapv #(.toLowerCase ^String %))
+                 (interpose "-")
+                 (clojure.string/join "")))
+           segid)
                (case requirement
                  "M" {}
                  "O" {:optional true})
                (case max-use
-                 1 (into [:map {:type :segment}]
+                 1 (into [:map {:type :segment
+                                :segment-id segid}]
                          (keep (fn [{el-num "Data Element Number" :as el}]
                                 (process-element x (if-some [seg (get elements el-num)]
                                                      (into el seg)
@@ -73,9 +100,13 @@
                                                                "items" (get composites el-num) )))))
                          (ds/mapseq-reader els))
                  [:sequential
-                  (into [:map {:type :segment}]
-                        (keep (fn [el]
-                                (process-element x el)))
+                  (into [:map {:type :segment
+                               :segment-id segid}]
+                        (keep (fn [{el-num "Data Element Number" :as el}]
+                                (process-element x (if-some [seg (get elements el-num)]
+                                                     (into el seg)
+                                                     (assoc el "Data Element Type" "Compostite"
+                                                               "items" (get composites el-num) )))))
                         (ds/mapseq-reader els))])]))))
 
 (defn process-segments [spec]
@@ -155,8 +186,7 @@
       (into (comp
               (mapcat (process-areas spec)))
             (partition-dataset-by tx-set #(get % "Area")))
-      ;      (m/schema {:registry (merge (m/default-schemas) (mtime/schemas))})
-      ))
+            (m/schema {:registry (merge (m/default-schemas) (mtime/schemas))})))
 
 (def files {"SETHEAD.TXT"
             ["Transaction Set ID", "Transaction Set Name", "Functional Group ID"]
