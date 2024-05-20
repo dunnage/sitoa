@@ -3,6 +3,7 @@
             [malli.core :as m]
             [net.cgrand.xforms :as xforms]
             [tech.v3.dataset :as ds]
+            [malli.experimental.time :as mtime]
             [tech.v3.dataset.join :as ds-join])
   (:import (clojure.lang IReduceInit)
            (java.nio.file Files LinkOption Path)
@@ -33,15 +34,14 @@
 
   (fn [segment {segid "Segment ID"
                 seq "Sequence" :as element}]
-    (prn element)
     [(format "%s%02d" segid seq )
      (case (get element "Data Element Type")
-       "ID" [:enum]
+       "ID" [:enum :temp]
        "AN" [:string {:min (get element "Minimum Length")
                       :max (get element "Maximum Length")}]
-       "DT" :time/date
+       "DT" :time/local-date
        "TM" :time/local-time
-       "R"  :any
+       "R"  [decimal?]
        "N0" :any
        "N2" :any
        "Compostite" [:map]
@@ -60,8 +60,7 @@
                                                 (= (get x "Segment ID")
                                                    (get y "Segment ID"))))
                     (ds/sort-by-column "Sequence"))]
-        (prn els)
-      [segid
+        [segid
                (case requirement
                  "M" {}
                  "O" {:optional true})
@@ -156,7 +155,7 @@
       (into (comp
               (mapcat (process-areas spec)))
             (partition-dataset-by tx-set #(get % "Area")))
-      ; (m/schema)
+      ;      (m/schema {:registry (merge (m/default-schemas) (mtime/schemas))})
       ))
 
 (def files {"SETHEAD.TXT"
