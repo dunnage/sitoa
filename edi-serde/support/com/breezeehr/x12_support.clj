@@ -22,6 +22,17 @@
           (if (.hasNext it)
             (recur it (f state (.next it)))
             state))))))
+
+(defn snake-case-keyword [x]
+  (-> x
+      (clojure.string/replace #"/|," "")
+      (clojure.string/split #"\s")
+      (->>
+        (mapv #(.toLowerCase ^String %))
+        (interpose "-")
+        (clojure.string/join ""))
+      keyword))
+
 (defn partition-dataset-by [dataset partitioner]
   (eduction
     (comp
@@ -32,7 +43,8 @@
 
 (defn make-process-element [spec]
 
-  (let [elements (get spec :elements)]
+  (let [elements (get spec :elements)
+        CONDETL (get spec "CONDETL.TXT")]
     (fn inner-make-process-element [segment {segid "Segment ID"
                                              compid "Composite Data Element Number"
                                              seq   "Sequence" :as element}]
@@ -40,7 +52,44 @@
          (format "%s%02d" segid seq)
          (format "%s-%02d" compid seq))
        (case (get element "Data Element Type")
-         "ID" [:enum :temp]
+         "ID" (let [items (ds/filter CONDETL
+                                     (fn [y]
+
+                                       (and
+                                         (= (get segment "Area")
+                                            (get y "Area"))
+                                         (= (get segment "Sequence")
+                                            (get y "Sequence"))
+                                         (= (get element "Data Element Number")
+                                            (get y "Data Element Number"))
+                                         (= "E"
+                                            (get y "Record Type")))))]
+                #_(prn (get segment "Area")
+                     (get segment "Sequence")
+                     (get element "Data Element Number"))
+                #_(prn (ds/filter CONDETL
+                                (fn [y]
+                                  (and
+                                    (= (get segment "Area")
+                                       (get y "Area"))
+                                    (= (get segment "Sequence")
+                                       (get y "Sequence"))
+                                    (= (get element "Data Element Number")
+                                       (get y "Data Element Number"))
+                                    ))))
+                #_(when (zero? (ds/row-count items))
+                  (prn element))
+                (if (zero? (ds/row-count items))
+                  (if segid
+                    [:string {:type "ID"
+                              :min  (get element "Minimum Length")
+                              :max  (get element "Maximum Length")}]
+                    [:enum :composite])
+                  (into [:enum]
+                        (keep (fn [x]
+                                (get x "Code")))
+                        (ds/mapseq-reader
+                          items))))
          "AN" [:string {:min (get element "Minimum Length")
                         :max (get element "Maximum Length")}]
          "DT" :time/local-date
@@ -79,13 +128,7 @@
                     (ds/sort-by-column "Sequence"))]
         ;(prn ctx)
         [(if-some [seg-name (xforms/some (keep (fn [{x "Note"}] x)) (-> ctx ds/mapseq-reader))]
-           (-> seg-name
-               (clojure.string/replace #"/|," "")
-               (clojure.string/split #"\s")
-               (->>
-                 (mapv #(.toLowerCase ^String %))
-                 (interpose "-")
-                 (clojure.string/join "")))
+           (snake-case-keyword seg-name)
            segid)
                (case requirement
                  "M" {}
@@ -248,6 +291,8 @@
             files)
          (update
            "ELEDETL.TXT" ds/column-map  "Data Element Number"  str :string ["Data Element Number"])
+         (update
+           "CONDETL.TXT" ds/column-map  "Data Element Number"  str :string ["Data Element Number"])
          index-dataelements
          index-composites)
 
