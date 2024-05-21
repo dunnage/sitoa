@@ -44,63 +44,99 @@
 (defn make-process-element [spec]
 
   (let [elements (get spec :elements)
-        CONDETL (get spec "CONDETL.TXT")]
+        CONDETL (get spec "CONDETL.TXT")
+        CONTEXT (get spec "CONTEXT.TXT")
+        ELEHEAD (get spec "ELEHEAD.TXT")]
     (fn inner-make-process-element [segment {segid "Segment ID"
                                              compid "Composite Data Element Number"
                                              seq   "Sequence" :as element}]
-      [(if segid
-         (format "%s%02d" segid seq)
-         (format "%s-%02d" compid seq))
-       (case (get element "Data Element Type")
-         "ID" (let [items (ds/filter CONDETL
-                                     (fn [y]
+      (let [context (ds/filter CONTEXT
+                               (fn [y]
 
-                                       (and
-                                         (= (get segment "Area")
-                                            (get y "Area"))
-                                         (= (get segment "Sequence")
-                                            (get y "Sequence"))
-                                         (= (get element "Data Element Number")
-                                            (get y "Data Element Number"))
-                                         (= "E"
-                                            (get y "Record Type")))))]
-                #_(prn (get segment "Area")
-                     (get segment "Sequence")
-                     (get element "Data Element Number"))
-                #_(prn (ds/filter CONDETL
-                                (fn [y]
-                                  (and
-                                    (= (get segment "Area")
-                                       (get y "Area"))
-                                    (= (get segment "Sequence")
-                                       (get y "Sequence"))
-                                    (= (get element "Data Element Number")
-                                       (get y "Data Element Number"))
-                                    ))))
-                #_(when (zero? (ds/row-count items))
-                  (prn element))
-                (if (zero? (ds/row-count items))
-                  (if segid
-                    [:string {:type "ID"
-                              :min  (get element "Minimum Length")
-                              :max  (get element "Maximum Length")}]
-                    [:enum :composite])
-                  (into [:enum]
-                        (keep (fn [x]
-                                (get x "Code")))
-                        (ds/mapseq-reader
-                          items))))
-         "AN" [:string {:min (get element "Minimum Length")
-                        :max (get element "Maximum Length")}]
-         "DT" :time/local-date
-         "TM" :time/local-time
-         "R" [decimal?]
-         "N0" :int
-         "N2" :int
-         "Compostite" (into [:map]
-                            (keep (fn [subitem]
-                                    (inner-make-process-element segment (into subitem (get elements (str (get subitem "Data Element Number")))))))
-                            (ds/mapseq-reader (get element "items"))))])))
+                                 (and
+                                   (= (get segment "Area")
+                                      (get y "Area"))
+                                   (= (get segment "Sequence")
+                                      (get y "Sequence"))
+                                   (= (get element "Sequence")
+                                      (get y "Reference Designator"))
+                                   #_(= (get element "Data Element Number")
+                                      (get y "Data Element Number"))
+                                   (= "F"
+                                      (get y "Note Type")))))
+            context-name (-> context
+                             (ds/mapseq-reader)
+                             (->> (xforms/some (keep #(get % "Note")))))
+            elname (-> (ds/filter ELEHEAD
+                                  (fn [y]
+
+                                    (and
+                                      (= (get element "Data Element Number")
+                                         (str (get y "Data Element Number"))))))
+                       (ds/mapseq-reader)
+                       (->> (xforms/some (keep #(get % "Data Element Name")))))
+            fallback-name (if segid
+                            (format "%s%02d" segid seq)
+                            (format "%s-%02d" compid seq))]
+        ;(prn  elname)
+        ;(prn context-name)
+        ;(prn element)
+        [(cond                                              ;context-name
+           ;(snake-case-keyword context-name)
+               ;elname
+               ;(snake-case-keyword elname)
+               :default
+               (snake-case-keyword fallback-name))
+         (case (get element "Data Element Type")
+           "ID" (let [items (ds/filter CONDETL
+                                       (fn [y]
+
+                                         (and
+                                           (= (get segment "Area")
+                                              (get y "Area"))
+                                           (= (get segment "Sequence")
+                                              (get y "Sequence"))
+                                           (= (get element "Data Element Number")
+                                              (get y "Data Element Number"))
+                                           (= "E"
+                                              (get y "Record Type")))))]
+                  #_(prn (get segment "Area")
+                         (get segment "Sequence")
+                         (get element "Data Element Number"))
+                  #_(prn (ds/filter CONDETL
+                                    (fn [y]
+                                      (and
+                                        (= (get segment "Area")
+                                           (get y "Area"))
+                                        (= (get segment "Sequence")
+                                           (get y "Sequence"))
+                                        (= (get element "Data Element Number")
+                                           (get y "Data Element Number"))
+                                        ))))
+                  #_(when (zero? (ds/row-count items))
+                      (prn element))
+                  (if (zero? (ds/row-count items))
+                    (if segid
+                      [:string {:type "ID"
+                                :min  (get element "Minimum Length")
+                                :max  (get element "Maximum Length")}]
+                      [:enum :composite])
+                    (into [:enum]
+                          (keep (fn [x]
+                                  (get x "Code")))
+                          (ds/mapseq-reader
+                            items))))
+           "AN" [:string {:min (get element "Minimum Length")
+                          :max (get element "Maximum Length")}]
+           "DT" :time/local-date
+           "TM" :time/local-time
+           "R" [decimal?]
+           "N0" :int
+           "N2" :int
+           "Compostite" (into [:map]
+                              (keep (fn [subitem]
+                                      (inner-make-process-element segment (into subitem (get elements (str (get subitem "Data Element Number")))))))
+                              (ds/mapseq-reader (get element "items"))))]))))
 
 (defn process-segment [spec]
   (let [context (get spec "CONTEXT.TXT")
@@ -245,7 +281,7 @@
             "COMDETL.TXT"
             ["Composite Data Element Number", "Sequence", "Data Element Number", "Requirement"]
             "ELEHEAD.TXT"
-            ["Element Data Number", "Data Element Name"]
+            ["Data Element Number", "Data Element Name"]
             "ELEDETL.TXT"
             ["Data Element Number", "Data Element Type", "Minimum Length",
              "Maximum Length"]
