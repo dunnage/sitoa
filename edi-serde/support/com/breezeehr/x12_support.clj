@@ -327,7 +327,7 @@
       (into (comp
               (mapcat (process-areas spec)))
             (partition-dataset-by tx-set #(get % "Area")))
-      ;(m/schema {:registry (merge (m/default-schemas) (mtime/schemas))})
+      (m/schema {:registry (merge (m/default-schemas) (mtime/schemas))})
       ))
 
 (def files {"SETHEAD.TXT"
