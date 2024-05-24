@@ -9,6 +9,7 @@
            (java.nio.file Files LinkOption Path)
            (java.util Iterator)))
 
+(def ^:dynamic *context-data* nil)
 (defn iterator-reducible
   "Similar to `clojure.core/iterator-seq`,
    but returns something reducible instead of a lazy-seq."
@@ -23,14 +24,17 @@
             (recur it (f state (.next it)))
             state))))))
 
-(defn snake-case-keyword [x]
+(defn snake-case-str [x]
   (-> x
       (clojure.string/replace #"/|," "")
       (clojure.string/split #"\s")
       (->>
         (mapv #(.toLowerCase ^String %))
         (interpose "-")
-        (clojure.string/join ""))
+        (clojure.string/join ""))))
+
+(defn snake-case-keyword [x]
+  (-> (snake-case-str x)
       keyword))
 
 (defn partition-dataset-by [dataset partitioner]
@@ -41,6 +45,9 @@
              (transduce (map identity) (ds/mapseq-rf) x))))
     (ds/mapseq-reader dataset)))
 
+(defn format-sequence-number [x seq]
+  (format "%s-%02d" x seq))
+
 (defn make-process-element [spec]
 
   (let [elements (get spec :elements)
@@ -50,7 +57,49 @@
     (fn inner-make-process-element [segment {segid "Segment ID"
                                              compid "Composite Data Element Number"
                                              seq   "Sequence" :as element}]
-      (let [context (ds/filter CONTEXT
+      ;(prn element)
+      (let [context (if compid
+                      (ds/filter CONTEXT
+                                 (fn [y]
+                                   (and
+                                     (= (get segment "Area")
+                                        (get y "Area"))
+                                     (= (get segment "Sequence")
+                                        (get y "Sequence"))
+                                     (= (get element "Sequence")
+                                        (get y "Composite Sequence"))
+                                     #_(= (get element "Data Element Number")
+                                          (get y "Data Element Number"))
+                                     (= "F"
+                                        (get y "Note Type")))))
+                      (ds/filter CONTEXT
+                                 (fn [y]
+
+                                   (and
+                                     (= (get segment "Area")
+                                        (get y "Area"))
+                                     (= (get segment "Sequence")
+                                        (get y "Sequence"))
+                                     (= (get element "Sequence")
+                                        (get y "Reference Designator"))
+                                     #_(= (get element "Data Element Number")
+                                          (get y "Data Element Number"))
+                                     (= "F"
+                                        (get y "Note Type"))))))
+            usage (if compid
+                    (ds/filter CONDETL
+                               (fn [y]
+
+                                 (and
+                                   (= (get segment "Area")
+                                      (get y "Area"))
+                                   (= (get segment "Sequence")
+                                      (get y "Sequence"))
+                                   (= (get element "Sequence")
+                                      (get y "Composite Sequence"))
+                                   (= "D"
+                                      (get y "Record Type")))))
+                    (ds/filter CONDETL
                                (fn [y]
 
                                  (and
@@ -60,16 +109,18 @@
                                       (get y "Sequence"))
                                    (= (get element "Sequence")
                                       (get y "Reference Designator"))
-                                   #_(= (get element "Data Element Number")
-                                      (get y "Data Element Number"))
-                                   (= "F"
-                                      (get y "Note Type")))))
-            context-name (-> context
-                             (ds/mapseq-reader)
-                             (->> (xforms/some (keep #(get % "Note")))))
-            elname (-> (ds/filter ELEHEAD
+                                   (= "C"
+                                      (get y "Record Type"))))))
+            usagex (-> usage
+                       ds/mapseq-reader
+                       (->> (xforms/some (keep #(get % "Usage")))))
+            context-name (some-> context
+                                 (ds/mapseq-reader)
+                                 (->> (xforms/some (keep #(get % "Note"))))
+                                 snake-case-str
+                                 (format-sequence-number seq))
+            elname (some-> (ds/filter ELEHEAD
                                   (fn [y]
-
                                     (and
                                       (= (get element "Data Element Number")
                                          (str (get y "Data Element Number"))))))
@@ -81,118 +132,134 @@
         ;(prn  elname)
         ;(prn context-name)
         ;(prn element)
-        [(cond                                              ;context-name
-           ;(snake-case-keyword context-name)
-               ;elname
-               ;(snake-case-keyword elname)
-               :default
-               (snake-case-keyword fallback-name))
-         (case (get element "Data Element Type")
-           "ID" (let [items (ds/filter CONDETL
-                                       (fn [y]
+        (when-not (= 8 usagex)
+          [(cond context-name
+                 (keyword context-name)
+                 ;elname
+                 ;(snake-case-keyword elname)
+                 :default
+                 (snake-case-keyword fallback-name))
+           (cond-> {:sequence seq}
+                   (case usagex
+                     nil true
+                     (1 5) false
+                     (2 3 4 6 7 8) true)
+                   (assoc :optional  true))
+           (case (get element "Data Element Type")
+             "ID" (let [items (ds/filter CONDETL
+                                         (fn [y]
 
-                                         (and
-                                           (= (get segment "Area")
-                                              (get y "Area"))
-                                           (= (get segment "Sequence")
-                                              (get y "Sequence"))
-                                           (= (get element "Data Element Number")
-                                              (get y "Data Element Number"))
-                                           (= "E"
-                                              (get y "Record Type")))))]
-                  #_(prn (get segment "Area")
-                         (get segment "Sequence")
-                         (get element "Data Element Number"))
-                  #_(prn (ds/filter CONDETL
-                                    (fn [y]
-                                      (and
-                                        (= (get segment "Area")
-                                           (get y "Area"))
-                                        (= (get segment "Sequence")
-                                           (get y "Sequence"))
-                                        (= (get element "Data Element Number")
-                                           (get y "Data Element Number"))
-                                        ))))
-                  #_(when (zero? (ds/row-count items))
-                      (prn element))
-                  (if (zero? (ds/row-count items))
-                    (if segid
-                      [:string {:type "ID"
-                                :min  (get element "Minimum Length")
-                                :max  (get element "Maximum Length")}]
-                      [:enum :composite])
-                    (into [:enum]
-                          (keep (fn [x]
-                                  (get x "Code")))
-                          (ds/mapseq-reader
-                            items))))
-           "AN" [:string {:min (get element "Minimum Length")
-                          :max (get element "Maximum Length")}]
-           "DT" :time/local-date
-           "TM" :time/local-time
-           "R" [decimal?]
-           "N0" :int
-           "N2" :int
-           "Compostite" (into [:map]
-                              (keep (fn [subitem]
-                                      (inner-make-process-element segment (into subitem (get elements (str (get subitem "Data Element Number")))))))
-                              (ds/mapseq-reader (get element "items"))))]))))
+                                           (and
+                                             (= (get segment "Area")
+                                                (get y "Area"))
+                                             (= (get segment "Sequence")
+                                                (get y "Sequence"))
+                                             (= (get element "Data Element Number")
+                                                (get y "Data Element Number"))
+                                             (= "E"
+                                                (get y "Record Type")))))]
+                    #_(prn (get segment "Area")
+                           (get segment "Sequence")
+                           (get element "Data Element Number"))
+                    #_(prn (ds/filter CONDETL
+                                      (fn [y]
+                                        (and
+                                          (= (get segment "Area")
+                                             (get y "Area"))
+                                          (= (get segment "Sequence")
+                                             (get y "Sequence"))
+                                          (= (get element "Data Element Number")
+                                             (get y "Data Element Number"))
+                                          ))))
+                    #_(when (zero? (ds/row-count items))
+                        (prn element))
+                    (if (zero? (ds/row-count items))
+                      (if segid
+                        [:string {:type "ID"
+                                  :min  (get element "Minimum Length")
+                                  :max  (get element "Maximum Length")}]
+                        [:enum :composite])
+                      (into [:enum]
+                            (keep (fn [x]
+                                    (get x "Code")))
+                            (ds/mapseq-reader
+                              items))))
+             "AN" [:string {:min (get element "Minimum Length")
+                            :max (get element "Maximum Length")}]
+             "DT" :time/local-date
+             "TM" :time/local-time
+             "R" 'decimal?
+             "N0" :int
+             "N2" :int
+             "Compostite" (into [:map]
+                                (keep (fn [subitem]
+                                        (inner-make-process-element segment (into subitem (get elements (str (get subitem "Data Element Number")))))))
+                                (ds/mapseq-reader (get element "items"))))])))))
 
 (defn process-segment [spec]
-  (let [context (get spec "CONTEXT.TXT")
-        segment-detail (get spec "SEGDETL.TXT")
+  (let [segment-detail (get spec "SEGDETL.TXT")
         elements (get spec :elements)
         composites (get spec :composites)
         process-element (make-process-element spec)]
     (fn [{s           "Sequence" segid "Segment ID" max-use "Maximum Use"
-          requirement "Requirement"
+          requirement "Requirement" loop-repeat "Loop Repeat"
           :as x}]
-      (let [els (-> (ds/filter segment-detail (fn [y]
-                                                (= (get x "Segment ID")
-                                                   (get y "Segment ID"))))
-                    (ds/sort-by-column "Sequence"))
-            ctx (-> (ds/filter context (fn [y]
-                                         (and (= (get x "Area")
-                                                 (get y "Area"))
-                                              (= (get x "Sequence")
-                                                 (get y "Sequence"))
-                                              (= "A"
-                                                 (get y "Note Type"))
-                                              (= "B"
-                                                 (get y "Record Type")))
-                                         ))
-                    (ds/sort-by-column "Sequence"))]
-        ;(prn ctx)
-        [(if-some [seg-name (xforms/some (keep (fn [{x "Note"}] x)) (-> ctx ds/mapseq-reader))]
-           (snake-case-keyword seg-name)
-           segid)
-               (case requirement
-                 "M" {}
-                 "O" {:optional true})
-               (case max-use
-                 1 (into [:map {:type :segment
-                                :segment-id segid}]
-                         (keep (fn [{el-num "Data Element Number" :as el}]
-                                (process-element x (if-some [seg (get elements el-num)]
-                                                     (into el seg)
-                                                     (assoc el "Data Element Type" "Compostite"
-                                                               "items" (get composites el-num) )))))
-                         (ds/mapseq-reader els))
-                 [:sequential
-                  (into [:map {:type :segment
-                               :segment-id segid}]
-                        (keep (fn [{el-num "Data Element Number" :as el}]
-                                (process-element x (if-some [seg (get elements el-num)]
-                                                     (into el seg)
-                                                     (assoc el "Data Element Type" "Compostite"
-                                                               "items" (get composites el-num) )))))
-                        (ds/mapseq-reader els))])]))))
+      (when-some [usage (->> (ds/filter-column (get *context-data* "CONDETL.TXT") "Segment ID" nil?)
+                             ds/mapseq-reader
+                             (xforms/some (keep #(get % "Usage"))))]
+
+        (prn x)
+        (let [context (get *context-data* "CONTEXT.TXT")
+              els (-> (ds/filter segment-detail (fn [y]
+                                                  (= (get x "Segment ID")
+                                                     (get y "Segment ID"))))
+                      (ds/sort-by-column "Sequence"))
+              ctx (-> (ds/filter context (fn [y]
+                                           (and (= "A"
+                                                   (get y "Note Type"))
+                                                (= "B"
+                                                   (get y "Record Type")))
+                                           ))
+                      (ds/sort-by-column "Sequence"))
+              ]
+          (prn segid)
+          (prn usage)
+          (prn context)
+          [(if-some [seg-name (xforms/some (keep (fn [{x "Note"}] x)) (-> ctx ds/mapseq-reader))]
+             (snake-case-keyword seg-name)
+             segid)
+           (case requirement
+             "M" {}
+             "O" {:optional true})
+           (case max-use
+             1 (into [:map {:type       :segment
+                            :segment-id segid}]
+                     (keep (fn [{el-num "Data Element Number" :as el}]
+                             (process-element x (if-some [seg (get elements el-num)]
+                                                  (into el seg)
+                                                  (assoc el "Data Element Type" "Compostite"
+                                                            "items" (get composites el-num))))))
+                     (ds/mapseq-reader els))
+             [:sequential
+              (into [:map {:type       :segment
+                           :segment-id segid}]
+                    (keep (fn [{el-num "Data Element Number" :as el}]
+                            (process-element x (if-some [seg (get elements el-num)]
+                                                 (into el seg)
+                                                 (assoc el "Data Element Type" "Compostite"
+                                                           "items" (get composites el-num))))))
+                    (ds/mapseq-reader els))])])))))
 
 (defn process-segments [spec]
   (let [ps (process-segment spec)]
     (fn [segment-ds]
       (into []
-            (map ps)
+            (keep (fn [{seq-num "Sequence"  :as segment}]
+                    (prn seq-num)
+                   (binding [*context-data* (-> *context-data*
+                                                (update "CONDETL.TXT" ds/filter-column "Sequence" #(= (long %) seq-num))
+                                                (update "CONTEXT.TXT" ds/filter-column "Sequence" #(= (long %) seq-num)))]
+                     (ps segment))) )
             (ds/mapseq-reader segment-ds)))))
 
 
@@ -204,68 +271,64 @@
              requirement "Requirement" loop-repeat "Loop Repeat"
              :as first-seg}
             (ds/row-at loop-ds 0)]
-        [loopid
-         (case requirement
-           "M" {}
-           "O" {:optional true})
-         (case loop-repeat
-           ">1"
-           [:sequential
-            (-> [:map {:type :loop}]
-                (conj (single-ps first-seg))
-                (into (comp
-                        (mapcat (fn [ds]
-                                  (let [first-row (ds/row-at ds 0)]
-                                    (if (get first-row "Loop Identifier")
-                                      [(process-loop-inner ds (inc level))]
-                                      (ps ds)))
-                                  )))
-                      (partition-dataset-by
-                        (ds/drop-rows loop-ds [0])
-                        #(= level (get % "Loop Level")))))]
-           "1"
-           (-> [:map {:type :loop}]
-               (conj (single-ps first-seg))
-               (into (comp
-                       (mapcat (fn [ds]
-                                 (let [first-row (ds/row-at ds 0)]
-                                   (if (get first-row "Loop Identifier")
-                                     [(process-loop-inner ds (inc level))]
-                                     (ps ds)))
-                                 )))
-                     (partition-dataset-by
-                       (ds/drop-rows loop-ds [0])
-                       #(= level (get % "Loop Level")))))
-           [:sequential
-            (-> [:map {:type :loop}]
-                (conj (single-ps first-seg))
-                (into (comp
-                        (mapcat (fn [ds]
-                                  (let [first-row (ds/row-at ds 0)]
-                                    (if (get first-row "Loop Identifier")
-                                      [(process-loop-inner ds (inc level))]
-                                      (ps ds)))
-                                  )))
-                      (partition-dataset-by
-                        (ds/drop-rows loop-ds [0])
-                        #(= level (get % "Loop Level")))))])]))))
+        (let [first-segment (let [{seq-num "Sequence"} first-seg]
+                              (assert (integer? seq-num))
+                              (binding [*context-data* (-> *context-data*
+                                                           (update "CONDETL.TXT" ds/filter-column "Sequence" #(= (long %) seq-num))
+                                                           (update "CONTEXT.TXT" ds/filter-column "Sequence" #(= (long %) seq-num)))]
+                                (single-ps first-seg)))
+              other-segments (not-empty (into [] (comp
+                                                   (mapcat (fn [ds]
+                                                             (let [first-row (ds/row-at ds 0)]
+                                                               (if (get first-row "Loop Identifier")
+                                                                 [(process-loop-inner ds (inc level))]
+                                                                 (ps ds)))
+                                                             )))
+                                              (partition-dataset-by
+                                                (ds/drop-rows loop-ds [0])
+                                                #(= level (get % "Loop Level")))))
+              inner-map (cond-> [:map {:type :loop}]
+                                first-segment
+                                (conj first-segment)
+                                other-segments
+                                (into other-segments))]
+          [loopid
+           (case requirement
+             "M" {}
+             "O" {:optional true})
+           (case loop-repeat
+             ">1"
+             [:sequential
+              inner-map]
+             "1"
+             inner-map
+             [:sequential
+              inner-map])])))))
 
 (defn process-areas [spec]
   (let [ps (process-segments spec)
         pl (process-loop spec ps)
         ]
     (fn [area-ds]
-      (let [first-row (ds/row-at area-ds 0)]
-        (if (get first-row "Loop Identifier")
-          [(pl area-ds 1)]
-          (ps area-ds))))))
+      (let [{area "Area" :as first-row} (ds/row-at area-ds 0)]
+        (binding [*context-data* (-> spec
+                                     (select-keys ["CONDETL.TXT"
+                                                   "CONTEXT.TXT"])
+                                     (update "CONDETL.TXT" ds/filter-column "Area" #(= (long %) area))
+                                     (update "CONTEXT.TXT" ds/filter-column "Area" #(= % area)))]
+          ;(prn area)
+          ;(prn *context-data*)
+          (if (get first-row "Loop Identifier")
+            [(pl area-ds 1)]
+            (ps area-ds)))))))
 
 (defn make-message [{tx-set "SETDETL.TXT" :as spec}]
   (-> [:map]
       (into (comp
               (mapcat (process-areas spec)))
             (partition-dataset-by tx-set #(get % "Area")))
-            (m/schema {:registry (merge (m/default-schemas) (mtime/schemas))})))
+      ;(m/schema {:registry (merge (m/default-schemas) (mtime/schemas))})
+      ))
 
 (def files {"SETHEAD.TXT"
             ["Transaction Set ID", "Transaction Set Name", "Functional Group ID"]
