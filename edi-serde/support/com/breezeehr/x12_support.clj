@@ -47,6 +47,20 @@
 
 (defn format-sequence-number [x seq]
   (format "%s-%02d" x seq))
+(defn check1 [xform data]
+  (transduce
+    (comp xform
+          (distinct))
+    (fn ([] [])
+      ([acc]
+       (when (> (count acc) 1)
+         (throw (ex-info "too many "
+                         {:dups acc
+                          :data data})))
+       data)
+      ([acc x ]
+       (conj acc x)))
+    data))
 
 (defn make-process-element [spec]
 
@@ -54,19 +68,30 @@
         CONDETL (get spec "CONDETL.TXT")
         CONTEXT (get spec "CONTEXT.TXT")
         ELEHEAD (get spec "ELEHEAD.TXT")]
-    (fn inner-make-process-element [segment {segid "Segment ID"
+    (fn inner-make-process-element [segment
+                                    {segid "Segment ID"
                                              compid "Composite Data Element Number"
-                                             seq   "Sequence" :as element}]
+                                     dtype "Data Element Type" :as element}
+                                    composite]
       ;(prn element)
-      (let [context (if compid
+      (let [main (if composite
+                   composite
+                   element)
+            seq (get main "Sequence")
+            context (if composite
                       (ds/filter CONTEXT
                                  (fn [y]
+
                                    (and
                                      (= (get segment "Area")
                                         (get y "Area"))
                                      (= (get segment "Sequence")
                                         (get y "Sequence"))
+                                     (= (get segment "Sequence")
+                                        (get y "Sequence"))
                                      (= (get element "Sequence")
+                                        (get y "Reference Designator"))
+                                     (= (get composite "Sequence")
                                         (get y "Composite Sequence"))
                                      #_(= (get element "Data Element Number")
                                           (get y "Data Element Number"))
@@ -82,20 +107,23 @@
                                         (get y "Sequence"))
                                      (= (get element "Sequence")
                                         (get y "Reference Designator"))
+                                     (= nil
+                                        (get y "Composite Sequence"))
                                      #_(= (get element "Data Element Number")
                                           (get y "Data Element Number"))
                                      (= "F"
                                         (get y "Note Type"))))))
-            usage (if compid
+            usage (if composite
                     (ds/filter CONDETL
                                (fn [y]
-
                                  (and
                                    (= (get segment "Area")
                                       (get y "Area"))
                                    (= (get segment "Sequence")
                                       (get y "Sequence"))
                                    (= (get element "Sequence")
+                                      (get y "Reference Designator"))
+                                   (= (get composite "Sequence")
                                       (get y "Composite Sequence"))
                                    (= "D"
                                       (get y "Record Type")))))
@@ -114,11 +142,15 @@
             usagex (-> usage
                        ds/mapseq-reader
                        (->> (xforms/some (keep #(get % "Usage")))))
+            _ (prn segment)
+            _ (prn element)
             context-name (some-> context
                                  (ds/mapseq-reader)
-                                 (->> (xforms/some (keep #(get % "Note"))))
+                                 (->>
+                                   (check1 (keep #(get % "Note")))
+                                   (xforms/some (keep #(get % "Note"))))
                                  snake-case-str
-                                 (format-sequence-number seq))
+                                 (format-sequence-number  seq))
             elname (some-> (ds/filter ELEHEAD
                                   (fn [y]
                                     (and
@@ -139,25 +171,43 @@
                  ;(snake-case-keyword elname)
                  :default
                  (snake-case-keyword fallback-name))
-           (cond-> {:sequence seq}
+           (cond-> {:sequence (if composite
+                                (get composite "Sequence")
+                                (get element "Sequence"))}
                    (case usagex
                      nil true
                      (1 5) false
                      (2 3 4 6 7 8) true)
                    (assoc :optional  true))
-           (case (get element "Data Element Type")
-             "ID" (let [items (ds/filter CONDETL
-                                         (fn [y]
+           (case (if composite
+                   (get composite "Data Element Type")
+                   (get element "Data Element Type"))
+             "ID" (let [items (if composite
+                                (ds/filter CONDETL
+                                           (fn [y]
+                                             (and
+                                               (= (get segment "Area")
+                                                  (get y "Area"))
+                                               (= (get segment "Sequence")
+                                                  (get y "Sequence"))
+                                               (= (get element "Sequence")
+                                                  (get y "Reference Designator"))
+                                               (= (get composite "Sequence")
+                                                  (get y "Composite Sequence"))
+                                               (= "E"
+                                                  (get y "Record Type")))))
+                                (ds/filter CONDETL
+                                           (fn [y]
 
-                                           (and
-                                             (= (get segment "Area")
-                                                (get y "Area"))
-                                             (= (get segment "Sequence")
-                                                (get y "Sequence"))
-                                             (= (get element "Data Element Number")
-                                                (get y "Data Element Number"))
-                                             (= "E"
-                                                (get y "Record Type")))))]
+                                             (and
+                                               (= (get segment "Area")
+                                                  (get y "Area"))
+                                               (= (get segment "Sequence")
+                                                  (get y "Sequence"))
+                                               (= (get element "Data Element Number")
+                                                  (get y "Data Element Number"))
+                                               (= "E"
+                                                  (get y "Record Type"))))))]
                     #_(prn (get segment "Area")
                            (get segment "Sequence")
                            (get element "Data Element Number"))
@@ -176,24 +226,24 @@
                     (if (zero? (ds/row-count items))
                       (if segid
                         [:string {:type "ID"
-                                  :min  (get element "Minimum Length")
-                                  :max  (get element "Maximum Length")}]
+                                  :min  (get main "Minimum Length")
+                                  :max  (get main "Maximum Length")}]
                         [:enum :composite])
                       (into [:enum]
                             (keep (fn [x]
                                     (get x "Code")))
                             (ds/mapseq-reader
                               items))))
-             "AN" [:string {:min (get element "Minimum Length")
-                            :max (get element "Maximum Length")}]
+             "AN" [:string {:min (get main "Minimum Length")
+                            :max (get main "Maximum Length")}]
              "DT" :time/local-date
              "TM" :time/local-time
              "R" 'decimal?
              "N0" :int
              "N2" :int
-             "Compostite" (into [:map]
+             "Composite" (into [:map]
                                 (keep (fn [subitem]
-                                        (inner-make-process-element segment (into subitem (get elements (str (get subitem "Data Element Number")))))))
+                                        (inner-make-process-element segment element (into subitem (get elements (str (get subitem "Data Element Number")))))))
                                 (ds/mapseq-reader (get element "items"))))])))))
 
 (defn process-segment [spec]
@@ -237,8 +287,9 @@
                      (keep (fn [{el-num "Data Element Number" :as el}]
                              (process-element x (if-some [seg (get elements el-num)]
                                                   (into el seg)
-                                                  (assoc el "Data Element Type" "Compostite"
-                                                            "items" (get composites el-num))))))
+                                                  (assoc el "Data Element Type" "Composite"
+                                                            "items" (get composites el-num)))
+                                              nil)))
                      (ds/mapseq-reader els))
              [:sequential
               (into [:map {:type       :segment
@@ -246,8 +297,9 @@
                     (keep (fn [{el-num "Data Element Number" :as el}]
                             (process-element x (if-some [seg (get elements el-num)]
                                                  (into el seg)
-                                                 (assoc el "Data Element Type" "Compostite"
-                                                           "items" (get composites el-num))))))
+                                                 (assoc el "Data Element Type" "Composite"
+                                                           "items" (get composites el-num)))
+                                             nil)))
                     (ds/mapseq-reader els))])])))))
 
 (defn process-segments [spec]
