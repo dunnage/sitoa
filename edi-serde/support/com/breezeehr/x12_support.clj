@@ -141,9 +141,9 @@
                                       (get y "Record Type"))))))
             usagex (-> usage
                        ds/mapseq-reader
-                       (->> (xforms/some (keep #(get % "Usage")))))
-            _ (prn segment)
-            _ (prn element)
+                       (->>
+                         (check1  (keep #(get % "Usage")))
+                         (xforms/some (keep #(get % "Usage")))))
             context-name (some-> context
                                  (ds/mapseq-reader)
                                  (->>
@@ -151,7 +151,7 @@
                                    (xforms/some (keep #(get % "Note"))))
                                  snake-case-str
                                  (format-sequence-number  seq))
-            elname (some-> (ds/filter ELEHEAD
+            #_#_elname (some-> (ds/filter ELEHEAD
                                   (fn [y]
                                     (and
                                       (= (get element "Data Element Number")
@@ -258,7 +258,7 @@
                              ds/mapseq-reader
                              (xforms/some (keep #(get % "Usage"))))]
 
-        (prn x)
+        ;(prn x)
         (let [context (get *context-data* "CONTEXT.TXT")
               els (-> (ds/filter segment-detail (fn [y]
                                                   (= (get x "Segment ID")
@@ -272,9 +272,9 @@
                                            ))
                       (ds/sort-by-column "Sequence"))
               ]
-          (prn segid)
-          (prn usage)
-          (prn context)
+          ;(prn segid)
+          ;(prn usage)
+          ;(prn context)
           [(if-some [seg-name (xforms/some (keep (fn [{x "Note"}] x)) (-> ctx ds/mapseq-reader))]
              (snake-case-keyword seg-name)
              segid)
@@ -307,7 +307,7 @@
     (fn [segment-ds]
       (into []
             (keep (fn [{seq-num "Sequence"  :as segment}]
-                    (prn seq-num)
+                    ; (prn seq-num)
                    (binding [*context-data* (-> *context-data*
                                                 (update "CONDETL.TXT" ds/filter-column "Sequence" #(= (long %) seq-num))
                                                 (update "CONTEXT.TXT" ds/filter-column "Sequence" #(= (long %) seq-num)))]
