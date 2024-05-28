@@ -67,7 +67,8 @@
   (let [elements (get spec :elements)
         CONDETL (get spec "CONDETL.TXT")
         CONTEXT (get spec "CONTEXT.TXT")
-        ELEHEAD (get spec "ELEHEAD.TXT")]
+        ELEHEAD (get spec "ELEHEAD.TXT")
+        COMHEAD (get spec "COMHEAD.TXT")]
     (fn inner-make-process-element [segment
                                     {segid "Segment ID"
                                              compid "Composite Data Element Number"
@@ -151,26 +152,40 @@
                                    (xforms/some (keep #(get % "Note"))))
                                  snake-case-str
                                  (format-sequence-number  seq))
-            #_#_elname (some-> (ds/filter ELEHEAD
-                                  (fn [y]
-                                    (and
-                                      (= (get element "Data Element Number")
-                                         (str (get y "Data Element Number"))))))
-                       (ds/mapseq-reader)
-                       (->> (xforms/some (keep #(get % "Data Element Name")))))
+            generic-name (if (get element "items")
+                           (do
+                             (some-> (ds/filter COMHEAD
+                                                (fn [y]
+                                                  (and
+                                                    (= (get element "Data Element Number")
+                                                       (str (get y "Composite Data Element Number"))))))
+                                     (ds/mapseq-reader)
+                                     (->> (xforms/some (keep #(get % "Composite Name"))))
+                                     snake-case-str
+                                     (format-sequence-number  seq)))
+                           (some-> (ds/filter ELEHEAD
+                                              (fn [y]
+                                                (and
+                                                  (= (get element "Data Element Number")
+                                                     (str (get y "Data Element Number"))))))
+                                   (ds/mapseq-reader)
+                                   (->> (xforms/some (keep #(get % "Data Element Name"))))
+                                   snake-case-str
+                                   (format-sequence-number  seq)))
             fallback-name (if segid
                             (format "%s%02d" segid seq)
                             (format "%s-%02d" compid seq))]
         ;(prn  elname)
-        ;(prn context-name)
+        ;(prn generic-name)
         ;(prn element)
         (when-not (= 8 usagex)
           [(cond context-name
                  (keyword context-name)
-                 ;elname
-                 ;(snake-case-keyword elname)
+                 generic-name
+                 (keyword generic-name)
                  :default
-                 (snake-case-keyword fallback-name))
+                 (throw (ex-info "should not hit" {}))
+                 #_(snake-case-keyword fallback-name))
            (cond-> {:sequence (if composite
                                 (get composite "Sequence")
                                 (get element "Sequence"))}
@@ -392,7 +407,7 @@
             "SEGDETL.TXT"
             ["Segment ID", "Sequence", "Data Element Number", "Requirement", "Repeat"]
             "COMHEAD.TXT"
-            ["Element Number Composite Data", "Composite Name"]
+            ["Composite Data Element Number", "Composite Name"]
             "COMDETL.TXT"
             ["Composite Data Element Number", "Sequence", "Data Element Number", "Requirement"]
             "ELEHEAD.TXT"
