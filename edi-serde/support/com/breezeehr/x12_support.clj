@@ -469,6 +469,7 @@
   (def temp (ds/->dataset "specs/x12products/005010X279 Health Care Eligibility Benefit Inquiry and Response/270/seghead.txt"
                           {:file-type :csv}))
   (def spec (load-spec "specs/x12products/005010X279 Health Care Eligibility Benefit Inquiry and Response/270"))
+  (def spec (load-spec "specs/x12products/005010X279 Health Care Eligibility Benefit Inquiry and Response/271"))
   (make-message spec)
   )
 
