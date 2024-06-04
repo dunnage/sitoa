@@ -255,8 +255,8 @@
              "TM" :time/local-time
              "R" 'decimal?
              "N0" :int
-             "N2" :int
-             "Composite" (into [:map]
+             "N2" [:int {:shift 100}]
+             "Composite" (into [:map {:type :composite}]
                                 (keep (fn [subitem]
                                         (inner-make-process-element segment element (into subitem (get elements (str (get subitem "Data Element Number")))))))
                                 (ds/mapseq-reader (get element "items"))))])))))
