@@ -390,7 +390,7 @@
             (ps area-ds)))))))
 
 (defn make-message [{tx-set "SETDETL.TXT" :as spec}]
-  (-> [:map]
+  (-> [:map {:type :transaction}]
       (into (comp
               (mapcat (process-areas spec)))
             (partition-dataset-by tx-set #(get % "Area")))
