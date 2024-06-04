@@ -49,12 +49,18 @@
 
 (defn make-primitive-parser [sch]
   (case (->  sch m/deref m/type)
-    :enum identity
-    :string identity
+    :enum (fn [^String s]
+            (when-not (.isEmpty s)
+              s))
+    :string (fn [^String s]
+              (when-not (.isEmpty s)
+                s))
     :time/local-date (fn [s]
-                       (LocalDate/parse s (DateTimeFormatter/ofPattern "yyyyMMdd" )))
+                       (when-not (.isEmpty s)
+                         (LocalDate/parse s (DateTimeFormatter/ofPattern "yyyyMMdd"))))
     :time/local-time (fn [s]
-                       (LocalTime/parse s (DateTimeFormatter/ofPattern "HHmmss" )))
+                       (when-not (.isEmpty s)
+                         (LocalTime/parse s (DateTimeFormatter/ofPattern "HHmmss"))))
     :int (fn [^String s]
            (when-not (.isEmpty s)
              (Long/parseLong s)))
@@ -69,9 +75,11 @@
     (fn [r]
       (prn (-> r .getLocation))
       (when (skipper r)
-        (let [txt (prim-parser (.getText r))]
-          (.next r)
-          [k txt])))))
+        (if-some [txt (prim-parser (.getText r))]
+          (do (.next r)
+              [k txt])
+          (do  (.next r)
+               nil))))))
 
 (defn make-composite-parser [k meta sch from-pos]
   (fn [r]
@@ -92,7 +100,7 @@
   (if (= (.name (.getEventType r)) "END_SEGMENT")
     (when (.hasNext r)
       (.next r))
-    (when (.hasNext r)
+    #_(when (.hasNext r)
       (.next r)
       (recur r))))
 
