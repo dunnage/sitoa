@@ -73,7 +73,7 @@
         skipper (skip-elements element-pos from-pos)
         prim-parser (make-primitive-parser sch)]
     (fn [r]
-      (prn (-> r .getLocation))
+      ;(prn (-> r .getLocation))
       (when (skipper r)
         (if-some [txt (prim-parser (.getText r))]
           (do (.next r)
@@ -81,20 +81,52 @@
           (do  (.next r)
                nil))))))
 
+(defn consume-composite [r]
+  (if (= (.name (.getEventType r)) "END_COMPOSITE")
+    (when (.hasNext r)
+      (.next r))))
+
 (defn make-composite-parser [k meta sch from-pos]
-  (fn [r]
-    (loop []
-      (if (.hasNext r)
-        (let [next (.next r)]
-          (when (.isError next)
-            (prn (.getErrorType r)))
-          (prn (str (.getLocation r) " " (when (.hasText r)
-                                           (.getText r)))
-               (str next))
-          (if (= (.name (.getEventType r)) "END_TRANSACTION")
-            [:segment :done]
-            (recur)))
-        ))))
+  (let [nm (next-map-sch sch)
+        element-pos (:sequence meta)
+        collection? (case (m/type sch)
+                      (:sequential :vector :set) true
+                      false)
+        sub-element-pos (volatile! 0)
+        sub-parsers (into []
+                          (map (fn [[k meta sub-schema]]
+                                 (let [epos (inc @sub-element-pos)]
+                                   (vreset! sub-element-pos (-> meta :sequence))
+                                   (make-element-parser k meta sub-schema epos))))
+                          (m/children nm))
+        skipper (skip-elements element-pos from-pos)]
+    (if collection?
+      (fn [r] (assert false))
+      #_(fn [r]
+        (assert (= (.name (.getEventType r)) "START_COMPOSITE"))
+        (loop [data []]
+          (if (= (-> r .getLocation .getSegmentTag) tag)
+            (do
+              (.next r)
+              (let [m (into {}
+                            (map (fn [sub-parser]
+                                   (sub-parser r)))
+                            sub-parsers)]
+                (consume-composite r)
+                (recur (conj data m))))
+            (when-some [coll (not-empty data)]
+              [k coll]))))
+      (fn [r]
+        (assert (= (.name (.getEventType r)) "START_COMPOSITE"))
+        (prn :composite sch)
+        (when (skipper r)
+          (let [m (into {}
+                        (map (fn [sub-parser]
+                               (sub-parser r)))
+                        sub-parsers)]
+            (prn (.name (.getEventType r)))
+            (consume-composite r)
+            [k m]))))))
 
 (defn consume-segment [r]
   (if (= (.name (.getEventType r)) "END_SEGMENT")
@@ -119,23 +151,38 @@
                                      nil (make-element-parser k meta sub-schema epos)))))
                           (m/children nm))
         tag (-> nm m/properties :segment-id)]
-    (fn [r]
-      (assert  (= (.name (.getEventType r)) "START_SEGMENT"))
-      (when (= (-> r .getLocation .getSegmentTag) tag)
-        (.next r)
-        (let [m (into {}
-                      (map (fn [sub-parser]
-                             (sub-parser r)))
-                      sub-parsers)]
-          (prn (.name (.getEventType r)) )
-          (consume-segment r)
-          [k m])))))
+    (if collection?
+      (fn [r]
+        (assert (= (.name (.getEventType r)) "START_SEGMENT"))
+        (loop [data []]
+          (if (= (-> r .getLocation .getSegmentTag) tag)
+            (do
+              (.next r)
+              (let [m (into {}
+                            (map (fn [sub-parser]
+                                   (sub-parser r)))
+                            sub-parsers)]
+                (consume-segment r)
+                (recur (conj data m))))
+            (when-some [coll (not-empty data)]
+              [k coll]))))
+      (fn [r]
+        (assert (= (.name (.getEventType r)) "START_SEGMENT"))
+        (when (= (-> r .getLocation .getSegmentTag) tag)
+          (.next r)
+          (let [m (into {}
+                        (map (fn [sub-parser]
+                               (sub-parser r)))
+                        sub-parsers)]
+            ;(prn (.name (.getEventType r)))
+            (consume-segment r)
+            [k m]))))))
 
 (defn first-segment [sch]
   (when-some [nm (next-map-sch sch)]
     (case (-> nm m/properties :type)
       :loop (when-some [[_ _ fchild] (-> nm m/children first)]
-              (prn fchild)
+              ;(prn fchild)
               (recur fchild))
       :segment nm)))
 
@@ -152,16 +199,29 @@
                                        :segment (make-segment-parser k meta sub-schema)))))
                             (m/children nm))
           tag (some-> nm first-segment m/properties :segment-id)]
-      (fn [r]
-        (prn tag)
-        (assert (= (.name (.getEventType r)) "START_SEGMENT"))
-        (when (= (-> r .getLocation .getSegmentTag) tag)
-          (let [m (into {}
-                        (map (fn [sub-parser]
-                               (sub-parser r)))
-                        sub-parsers)]
-            [k m]))))
-    (fn [r]nil)))
+      (if collection?
+        (fn [r]
+          ;(prn tag)
+          (assert (= (.name (.getEventType r)) "START_SEGMENT"))
+          (loop [data []]
+            (if (= (-> r .getLocation .getSegmentTag) tag)
+              (recur (conj data (into {}
+                                      (map (fn [sub-parser]
+                                             (sub-parser r)))
+                                      sub-parsers)))
+              (when-some [v (not-empty data)]
+                [k v]))))
+        (fn [r]
+          ;(prn tag)
+          (assert (= (.name (.getEventType r)) "START_SEGMENT"))
+          (when (= (-> r .getLocation .getSegmentTag) tag)
+            (let [m (into {}
+                          (map (fn [sub-parser]
+                                 (sub-parser r)))
+                          sub-parsers)]
+              [k m])))))
+    (assert false)
+    #_(fn [r]nil)))
 
 
 (defn make-transaction-parser [sch]
