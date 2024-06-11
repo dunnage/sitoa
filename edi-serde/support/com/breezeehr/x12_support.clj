@@ -46,7 +46,7 @@
     (ds/mapseq-reader dataset)))
 
 (defn format-sequence-number [x seq]
-  (format "%s-%02d" x seq))
+  (format "%s-%s" x seq))
 (defn check1 [xform data]
   (transduce
     (comp xform
@@ -158,7 +158,7 @@
                                                 (fn [y]
                                                   (and
                                                     (= (get element "Data Element Number")
-                                                       (str (get y "Composite Data Element Number"))))))
+                                                       (get y "Composite Data Element Number")))))
                                      (ds/mapseq-reader)
                                      (->> (xforms/some (keep #(get % "Composite Name"))))
                                      snake-case-str
@@ -167,18 +167,18 @@
                                               (fn [y]
                                                 (and
                                                   (= (get element "Data Element Number")
-                                                     (str (get y "Data Element Number"))))))
+                                                     (get y "Data Element Number")))))
                                    (ds/mapseq-reader)
                                    (->> (xforms/some (keep #(get % "Data Element Name"))))
                                    snake-case-str
                                    (format-sequence-number  seq)))
-            fallback-name (if segid
+            #_#_fallback-name (if segid
                             (format "%s%02d" segid seq)
                             (format "%s-%02d" compid seq))]
         ;(prn  elname)
         ;(prn generic-name)
         ;(prn element)
-        (when-not (= 8 usagex)
+        (when-not (= "8" usagex)
           [(cond context-name
                  (keyword context-name)
                  generic-name
@@ -186,13 +186,13 @@
                  :default
                  (throw (ex-info "should not hit" {}))
                  #_(snake-case-keyword fallback-name))
-           (cond-> {:sequence (if composite
-                                (get composite "Sequence")
-                                (get element "Sequence"))}
+           (cond-> {:sequence (parse-long (if composite
+                                            (get composite "Sequence")
+                                            (get element "Sequence")))}
                    (case usagex
                      nil true
-                     (1 5) false
-                     (2 3 4 6 7 8) true)
+                     ("1" "5") false
+                     ("2" "3" "4" "6" "7" "8") true)
                    (assoc :optional  true))
            (case (if composite
                    (get composite "Data Element Type")
@@ -241,16 +241,16 @@
                     (if (zero? (ds/row-count items))
                       (if segid
                         [:string {:type "ID"
-                                  :min  (get main "Minimum Length")
-                                  :max  (get main "Maximum Length")}]
+                                  :min  (some-> (get main "Minimum Length") parse-long)
+                                  :max  (some-> (get main "Maximum Length") parse-long)}]
                         [:enum :composite])
                       (into [:enum]
                             (keep (fn [x]
                                     (get x "Code")))
                             (ds/mapseq-reader
                               items))))
-             "AN" [:string {:min (get main "Minimum Length")
-                            :max (get main "Maximum Length")}]
+             "AN" [:string {:min (some-> (get main "Minimum Length") parse-long)
+                            :max (some-> (get main "Maximum Length") parse-long)}]
              "DT" :time/local-date
              "TM" :time/local-time
              "R" 'decimal?
@@ -258,7 +258,7 @@
              "N2" [:int {:shift 100}]
              "Composite" (into [:map {:type :composite}]
                                 (keep (fn [subitem]
-                                        (inner-make-process-element segment element (into subitem (get elements (str (get subitem "Data Element Number")))))))
+                                        (inner-make-process-element segment element (into subitem (get elements (get subitem "Data Element Number"))))))
                                 (ds/mapseq-reader (get element "items"))))])))))
 
 (defn process-segment [spec]
@@ -297,7 +297,7 @@
              "M" {}
              "O" {:optional true})
            (case max-use
-             1 (into [:map {:type       :segment
+             "1" (into [:map {:type       :segment
                             :segment-id segid}]
                      (keep (fn [{el-num "Data Element Number" :as el}]
                              (process-element x (if-some [seg (get elements el-num)]
@@ -324,8 +324,8 @@
             (keep (fn [{seq-num "Sequence"  :as segment}]
                     ; (prn seq-num)
                    (binding [*context-data* (-> *context-data*
-                                                (update "CONDETL.TXT" ds/filter-column "Sequence" #(= (long %) seq-num))
-                                                (update "CONTEXT.TXT" ds/filter-column "Sequence" #(= (long %) seq-num)))]
+                                                (update "CONDETL.TXT" ds/filter-column "Sequence" #(= % seq-num))
+                                                (update "CONTEXT.TXT" ds/filter-column "Sequence" #(= % seq-num)))]
                      (ps segment))) )
             (ds/mapseq-reader segment-ds)))))
 
@@ -339,10 +339,9 @@
              :as first-seg}
             (ds/row-at loop-ds 0)]
         (let [first-segment (let [{seq-num "Sequence"} first-seg]
-                              (assert (integer? seq-num))
                               (binding [*context-data* (-> *context-data*
-                                                           (update "CONDETL.TXT" ds/filter-column "Sequence" #(= (long %) seq-num))
-                                                           (update "CONTEXT.TXT" ds/filter-column "Sequence" #(= (long %) seq-num)))]
+                                                           (update "CONDETL.TXT" ds/filter-column "Sequence" #(= % seq-num))
+                                                           (update "CONTEXT.TXT" ds/filter-column "Sequence" #(= % seq-num)))]
                                 (single-ps first-seg)))
               other-segments (not-empty (into [] (comp
                                                    (mapcat (fn [ds]
@@ -353,7 +352,7 @@
                                                              )))
                                               (partition-dataset-by
                                                 (ds/drop-rows loop-ds [0])
-                                                #(= level (get % "Loop Level")))))
+                                                #(= level (parse-long (get % "Loop Level"))))))
               inner-map (cond-> [:map {:type :loop}]
                                 first-segment
                                 (conj first-segment)
@@ -381,7 +380,7 @@
         (binding [*context-data* (-> spec
                                      (select-keys ["CONDETL.TXT"
                                                    "CONTEXT.TXT"])
-                                     (update "CONDETL.TXT" ds/filter-column "Area" #(= (long %) area))
+                                     (update "CONDETL.TXT" ds/filter-column "Area" #(= % area))
                                      (update "CONTEXT.TXT" ds/filter-column "Area" #(= % area)))]
           ;(prn area)
           ;(prn *context-data*)
@@ -450,14 +449,15 @@
                       (when (Files/exists spath (make-array LinkOption 0))
                         [f (ds/->dataset (.toFile spath)
                                          {:file-type   :csv
+                                          :parser-fn :string
                                           :header-row? false
                                           :key-fn      (into {} (map-indexed (fn [idx v]
                                                                                [(str "column-" idx) v]))
                                                              cols)})]))))
             files)
-         (update
+         #_(update
            "ELEDETL.TXT" ds/column-map  "Data Element Number"  str :string ["Data Element Number"])
-         (update
+         #_(update
            "CONDETL.TXT" ds/column-map  "Data Element Number"  str :string ["Data Element Number"])
          index-dataelements
          index-composites)

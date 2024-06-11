@@ -150,7 +150,8 @@
                                      :composite (make-composite-parser k meta sub-schema epos)
                                      nil (make-element-parser k meta sub-schema epos)))))
                           (m/children nm))
-        tag (-> nm m/properties :segment-id)]
+        tag (-> nm m/properties :segment-id)
+        validator (m/coercer sch)]
     (if collection?
       (fn [r]
         (assert (= (.name (.getEventType r)) "START_SEGMENT"))
@@ -174,6 +175,7 @@
                         (map (fn [sub-parser]
                                (sub-parser r)))
                         sub-parsers)]
+            (validator m)
             ;(prn (.name (.getEventType r)))
             (consume-segment r)
             [k m]))))))
@@ -245,7 +247,10 @@
 (defn make-unparser [sch])
 
 (comment
-  (def sch (-> (io/resource "x12_271.edn")
+
+  (require 'malli.dev)
+  (malli.dev/start!)
+  (def sch (-> (io/resource "x12_270.edn")
                io/reader
                PushbackReader.
                edn/read
@@ -255,8 +260,10 @@
   (def fact  (EDIInputFactory/newFactory))
   (.setProperty fact EDIInputFactory/EDI_IGNORE_EXTRANEOUS_CHARACTERS true)
   (.setProperty fact EDIInputFactory/EDI_VALIDATE_CONTROL_STRUCTURE false)
-  (with-open [r (.createEDIStreamReader fact (io/input-stream (io/resource  "271-3.edi"
+  (with-open [r (.createEDIStreamReader fact (io/input-stream (io/resource  "270-3.edi"
                                                           #_"simple_with_binary_segment.edi"
                                                           #_"sample837-original.edi")))]
     (let [consumer  (make-parser sch)]
       (consumer r))))
+
+
