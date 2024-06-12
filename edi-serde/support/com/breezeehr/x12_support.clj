@@ -27,6 +27,7 @@
 (defn snake-case-str [x]
   (-> x
       (clojure.string/replace #"/|," "")
+      (clojure.string/replace #"\(|\)" "")
       (clojure.string/split #"\s")
       (->>
         (mapv #(.toLowerCase ^String %))
@@ -43,6 +44,12 @@
       (partition-by partitioner)
       (map (fn [x]
              (transduce (map identity) (ds/mapseq-rf) x))))
+    (ds/mapseq-reader dataset)))
+
+(defn take-while-dataset [dataset pred]
+  (transduce
+    (take-while pred)
+    (ds/mapseq-rf)
     (ds/mapseq-reader dataset)))
 
 (defn format-sequence-number [x seq]
@@ -352,7 +359,7 @@
                                                              )))
                                               (partition-dataset-by
                                                 (ds/drop-rows loop-ds [0])
-                                                #(= level (parse-long (get % "Loop Level"))))))
+                                                #(>= level (parse-long (get % "Loop Level"))))))
               inner-map (cond-> [:map {:type :loop}]
                                 first-segment
                                 (conj first-segment)
@@ -373,15 +380,15 @@
 
 (defn process-areas [spec]
   (let [ps (process-segments spec)
-        pl (process-loop spec ps)
-        ]
+        pl (process-loop spec ps)]
     (fn [area-ds]
       (let [{area "Area" :as first-row} (ds/row-at area-ds 0)]
         (binding [*context-data* (-> spec
                                      (select-keys ["CONDETL.TXT"
                                                    "CONTEXT.TXT"])
-                                     (update "CONDETL.TXT" ds/filter-column "Area" #(= % area))
-                                     (update "CONTEXT.TXT" ds/filter-column "Area" #(= % area)))]
+                                     ;(update "CONDETL.TXT" ds/filter-column "Area" #(= % area))
+                                     ;(update "CONTEXT.TXT" ds/filter-column "Area" #(= % area))
+                                     )]
           ;(prn area)
           ;(prn *context-data*)
           (if (get first-row "Loop Identifier")
@@ -392,7 +399,7 @@
   (-> [:map {:type :transaction}]
       (into (comp
               (mapcat (process-areas spec)))
-            (partition-dataset-by tx-set #(get % "Area")))
+            (partition-dataset-by tx-set #(> (parse-long (get % "Loop Level")) 0)))
       (m/schema {:registry (merge (m/default-schemas) (mtime/schemas))})
       ))
 
