@@ -345,17 +345,25 @@
              requirement "Requirement" loop-repeat "Loop Repeat"
              :as first-seg}
             (ds/row-at loop-ds 0)]
-        (let [first-segment (let [{seq-num "Sequence"} first-seg]
+        (let [first-segment (let [{seq-num "Sequence" area "Area"} first-seg]
                               (binding [*context-data* (-> *context-data*
                                                            (update "CONDETL.TXT" ds/filter-column "Sequence" #(= % seq-num))
-                                                           (update "CONTEXT.TXT" ds/filter-column "Sequence" #(= % seq-num)))]
+                                                           (update "CONTEXT.TXT" ds/filter-column "Sequence" #(= % seq-num))
+                                                           (update "CONDETL.TXT" ds/filter-column "Area" #(= % area))
+                                                           (update "CONTEXT.TXT" ds/filter-column "Area" #(= % area)))]
                                 (single-ps first-seg)))
               other-segments (not-empty (into [] (comp
                                                    (mapcat (fn [ds]
                                                              (let [first-row (ds/row-at ds 0)]
                                                                (if (get first-row "Loop Identifier")
                                                                  [(process-loop-inner ds (inc level))]
-                                                                 (ps ds)))
+                                                                 (let [{seq-num "Sequence" area "Area"} first-row]
+                                                                   (binding [*context-data* (-> *context-data*
+                                                                                                (update "CONDETL.TXT" ds/filter-column "Sequence" #(= % seq-num))
+                                                                                                (update "CONTEXT.TXT" ds/filter-column "Sequence" #(= % seq-num))
+                                                                                                (update "CONDETL.TXT" ds/filter-column "Area" #(= % area))
+                                                                                                (update "CONTEXT.TXT" ds/filter-column "Area" #(= % area)))]
+                                                                     (ps ds)))))
                                                              )))
                                               (partition-dataset-by
                                                 (ds/drop-rows loop-ds [0])
