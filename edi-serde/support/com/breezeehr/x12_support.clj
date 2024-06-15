@@ -7,7 +7,7 @@
             [tech.v3.dataset.join :as ds-join])
   (:import (clojure.lang IReduceInit)
            (java.nio.file Files LinkOption Path)
-           (java.util Iterator)))
+           (java.util ArrayList Iterator)))
 
 (def ^:dynamic *context-data* nil)
 (defn iterator-reducible
@@ -51,6 +51,25 @@
     (take-while pred)
     (ds/mapseq-rf)
     (ds/mapseq-reader dataset)))
+
+(defn drop-while-dataset [dataset pred]
+  (transduce
+    (drop-while pred)
+    (ds/mapseq-rf)
+    (ds/mapseq-reader dataset)))
+
+
+(defn next-sibling-loop-row [ds level]
+  (let [on (volatile! false)]
+    (xforms/some
+      (map-indexed
+        (fn [i {ll "Loop Level" lid "Loop Identifier"}]
+          ;skip until after loops
+          (when (and (not @on) (not (and lid (= level (parse-long ll)))))
+            (vreset! on true))
+          (when (and @on lid (= level (parse-long ll)))
+            i)))
+      (ds/mapseq-reader ds))))
 
 (defn format-sequence-number [x seq]
   (format "%s-%s" x seq))
@@ -352,22 +371,33 @@
                                                            (update "CONDETL.TXT" ds/filter-column "Area" #(= % area))
                                                            (update "CONTEXT.TXT" ds/filter-column "Area" #(= % area)))]
                                 (single-ps first-seg)))
-              other-segments (not-empty (into [] (comp
-                                                   (mapcat (fn [ds]
-                                                             (let [first-row (ds/row-at ds 0)]
-                                                               (if (get first-row "Loop Identifier")
-                                                                 [(process-loop-inner ds (inc level))]
-                                                                 (let [{seq-num "Sequence" area "Area"} first-row]
-                                                                   (binding [*context-data* (-> *context-data*
-                                                                                                (update "CONDETL.TXT" ds/filter-column "Sequence" #(= % seq-num))
-                                                                                                (update "CONTEXT.TXT" ds/filter-column "Sequence" #(= % seq-num))
-                                                                                                (update "CONDETL.TXT" ds/filter-column "Area" #(= % area))
-                                                                                                (update "CONTEXT.TXT" ds/filter-column "Area" #(= % area)))]
-                                                                     (ps ds)))))
-                                                             )))
-                                              (partition-dataset-by
-                                                (ds/drop-rows loop-ds [0])
-                                                #(>= level (parse-long (get % "Loop Level"))))))
+              sibling-idx (next-sibling-loop-row loop-ds level)
+              other-segments (not-empty (-> []
+                                            (into (comp
+                                                       (mapcat (fn [ds]
+                                                                 (let [first-row (ds/row-at ds 0)]
+                                                                   ; (prn :chunk ds)
+                                                                   (if (get first-row "Loop Identifier")
+                                                                     [(process-loop-inner ds (parse-long (get first-row "Loop Level")))]
+                                                                     (let [{seq-num "Sequence" area "Area"} first-row]
+                                                                       (binding [*context-data* (-> *context-data*
+                                                                                                    (update "CONDETL.TXT" ds/filter-column "Sequence" #(= % seq-num))
+                                                                                                    (update "CONTEXT.TXT" ds/filter-column "Sequence" #(= % seq-num))
+                                                                                                    (update "CONDETL.TXT" ds/filter-column "Area" #(= % area))
+                                                                                                    (update "CONTEXT.TXT" ds/filter-column "Area" #(= % area)))]
+                                                                         (ps ds)))))
+                                                                 )))
+
+                                                  (partition-dataset-by
+                                                    (if sibling-idx
+                                                      (ds/select-rows loop-ds (range 1 (dec sibling-idx)))
+                                                      (ds/drop-rows loop-ds [0]))
+                                                    #(= level (parse-long (get % "Loop Level")))))
+                                            (into (when sibling-idx
+                                                    (let [ds (ds/select-rows loop-ds (range sibling-idx (ds/row-count loop-ds)))]
+                                                      (when-some [first-row (ds/row-at ds 0)]
+                                                        (assert (get first-row "Loop Identifier"))
+                                                        [(process-loop-inner ds (parse-long (get first-row "Loop Level")))]))))))
               inner-map (cond-> [:map {:type :loop}]
                                 first-segment
                                 (conj first-segment)
