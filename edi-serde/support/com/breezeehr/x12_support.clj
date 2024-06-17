@@ -299,7 +299,7 @@
                              ds/mapseq-reader
                              (xforms/some (keep #(get % "Usage"))))]
 
-        ;(prn x)
+        ;(prn segid usage)
         (let [context (get *context-data* "CONTEXT.TXT")
               els (-> (ds/filter segment-detail (fn [y]
                                                   (= (get x "Segment ID")
@@ -348,7 +348,9 @@
     (fn [segment-ds]
       (into []
             (keep (fn [{seq-num "Sequence"  :as segment}]
-                    ; (prn seq-num)
+                    #_(prn (get segment "Area") seq-num (get segment "Segment ID"))
+                    #_(prn (-> (get *context-data* "CONDETL.TXT" )
+                             (ds/filter-column "Sequence" #(= % seq-num))))
                    (binding [*context-data* (-> *context-data*
                                                 (update "CONDETL.TXT" ds/filter-column "Sequence" #(= % seq-num))
                                                 (update "CONTEXT.TXT" ds/filter-column "Sequence" #(= % seq-num)))]
@@ -364,6 +366,7 @@
              requirement "Requirement" loop-repeat "Loop Repeat"
              :as first-seg}
             (ds/row-at loop-ds 0)]
+        ;  (prn loop-ds)
         (let [first-segment (let [{seq-num "Sequence" area "Area"} first-seg]
                               (binding [*context-data* (-> *context-data*
                                                            (update "CONDETL.TXT" ds/filter-column "Sequence" #(= % seq-num))
@@ -381,8 +384,8 @@
                                                                      [(process-loop-inner ds (parse-long (get first-row "Loop Level")))]
                                                                      (let [{seq-num "Sequence" area "Area"} first-row]
                                                                        (binding [*context-data* (-> *context-data*
-                                                                                                    (update "CONDETL.TXT" ds/filter-column "Sequence" #(= % seq-num))
-                                                                                                    (update "CONTEXT.TXT" ds/filter-column "Sequence" #(= % seq-num))
+                                                                                                    ;(update "CONDETL.TXT" ds/filter-column "Sequence" #(= % seq-num))
+                                                                                                    ;(update "CONTEXT.TXT" ds/filter-column "Sequence" #(= % seq-num))
                                                                                                     (update "CONDETL.TXT" ds/filter-column "Area" #(= % area))
                                                                                                     (update "CONTEXT.TXT" ds/filter-column "Area" #(= % area)))]
                                                                          (ps ds)))))
@@ -420,7 +423,7 @@
   (let [ps (process-segments spec)
         pl (process-loop spec ps)]
     (fn [area-ds]
-      (let [{area "Area" :as first-row} (ds/row-at area-ds 0)]
+      (let [first-row (ds/row-at area-ds 0)]
         (binding [*context-data* (-> spec
                                      (select-keys ["CONDETL.TXT"
                                                    "CONTEXT.TXT"])
