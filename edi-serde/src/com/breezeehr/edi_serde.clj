@@ -117,8 +117,12 @@
             (when-some [coll (not-empty data)]
               [k coll]))))
       (fn [r]
-        (assert (= (.name (.getEventType r)) "START_COMPOSITE"))
-        (prn :composite sch)
+
+        #_(when-not  (= (.name (.getEventType r)) "START_COMPOSITE")
+          (throw (ex-info "should be composite"
+                          {:sch sch
+                           :data (str r)})))
+
         (when (skipper r)
           (let [m (into {}
                         (map (fn [sub-parser]
