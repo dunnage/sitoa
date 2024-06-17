@@ -60,7 +60,8 @@
                          (LocalDate/parse s (DateTimeFormatter/ofPattern "yyyyMMdd"))))
     :time/local-time (fn [s]
                        (when-not (.isEmpty s)
-                         (LocalTime/parse s (DateTimeFormatter/ofPattern "HHmmssSS"))))
+                         (LocalTime/parse s (DateTimeFormatter/ofPattern "HHmmss"
+                                                                         #_"HHmmssSS"))))
     :int (fn [^String s]
            (when-not (.isEmpty s)
              (Long/parseLong s)))
@@ -254,7 +255,7 @@
 
   (require 'malli.dev)
   (malli.dev/start!)
-  (def sch (-> (io/resource "x12_271.edn")
+  (def sch (-> (io/resource "x12_270.edn")
                io/reader
                PushbackReader.
                edn/read
@@ -265,8 +266,8 @@
   (.setProperty fact EDIInputFactory/EDI_IGNORE_EXTRANEOUS_CHARACTERS true)
   (.setProperty fact EDIInputFactory/EDI_VALIDATE_CONTROL_STRUCTURE false)
   (with-open [r (.createEDIStreamReader fact (io/input-stream (io/resource
-                                                                #_"270-3.edi"
-                                                                "271/section6-3.edi"
+                                                                "270-3.edi"
+                                                                #_"271/section6-3.edi"
                                                           #_"simple_with_binary_segment.edi"
                                                           #_"sample837-original.edi")))]
     (let [consumer  (make-parser sch)]
