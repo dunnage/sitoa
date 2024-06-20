@@ -6,7 +6,7 @@
   (:import (io.xlate.edi.stream EDIInputFactory EDIStreamReader)
            (java.io PushbackReader)
            (java.time LocalDate LocalTime)
-           (java.time.format DateTimeFormatter)))
+           (java.time.format DateTimeFormatter DateTimeFormatterBuilder)))
 
 (defn foo
   "I don't do a whole lot."
@@ -30,13 +30,22 @@
         (let [next (.next r)]
           (when (.isError next)
             (prn (.getErrorType r)))
-          ;(prn (.name (.getEventType r)))
+          (prn (.name (.getEventType r)))
           (if (= (.name (.getEventType r)) "START_TRANSACTION")
             (do
               (.next r)
               (recur (conj results (ot r))))
             (recur results)))
         (not-empty results)))))
+
+(defn parse-starter [ot]
+  (fn [^EDIStreamReader r]
+    (assert (.hasNext r))
+    (let [next (.next r)]
+      (when (.isError next)
+        (prn (.getErrorType r)))
+      (ot r))))
+
 (defn skip-elements [element-pos from-pos]
   (let [skip (- element-pos from-pos)]
     (fn [r]
@@ -46,6 +55,17 @@
             r
             (do (.next r)
               (recur (dec skip)))))))))
+
+(def edi-date (-> (DateTimeFormatterBuilder.)
+                  (.appendOptional (DateTimeFormatter/ofPattern "yyyyMMdd"))
+                  (.appendOptional (DateTimeFormatter/ofPattern "yyMMdd"))
+                  .toFormatter))
+
+(def edi-time (-> (DateTimeFormatterBuilder.)
+                  (.appendOptional (DateTimeFormatter/ofPattern "HHmmssSS"))
+                  (.appendOptional (DateTimeFormatter/ofPattern "HHmmss"))
+                  (.appendOptional (DateTimeFormatter/ofPattern "HHmm"))
+                  .toFormatter))
 
 (defn make-primitive-parser [sch]
   (case (->  sch m/deref m/type)
@@ -57,11 +77,10 @@
                 s))
     :time/local-date (fn [s]
                        (when-not (.isEmpty s)
-                         (LocalDate/parse s (DateTimeFormatter/ofPattern "yyyyMMdd"))))
+                         (LocalDate/parse s edi-date)))
     :time/local-time (fn [s]
                        (when-not (.isEmpty s)
-                         (LocalTime/parse s (DateTimeFormatter/ofPattern "HHmmss"
-                                                                         #_"HHmmssSS"))))
+                         (LocalTime/parse s edi-time)))
     :int (fn [^String s]
            (when-not (.isEmpty s)
              (Long/parseLong s)))
@@ -129,11 +148,11 @@
                         (map (fn [sub-parser]
                                (sub-parser r)))
                         sub-parsers)]
-            (prn (.name (.getEventType r)))
             (consume-composite r)
             [k m]))))))
 
 (defn consume-segment [r]
+  (assert (.name (.getEventType r)) "END_SEGMENT")
   (if (= (.name (.getEventType r)) "END_SEGMENT")
     (when (.hasNext r)
       (.next r))
@@ -244,6 +263,79 @@
                    (sub-parser r)))
             sub-parsers))))
 
+(defn make-transactions-parser [k meta sch ]
+  (let [sub-parsers (into []
+                          (map (fn [[k meta sub-schema]]
+                                 (case (next-map-type sub-schema)
+                                   :segment (make-segment-parser k meta sub-schema)
+                                   :loop (make-loop-parser k meta sub-schema))))
+                          (m/children sch))]
+    (fn [r]
+      ;(prn tag)
+      (assert (= (.name (.getEventType r)) "START_TRANSACTION"))
+      (loop [data []]
+        (if (= (.name (.getEventType r)) "START_TRANSACTION")
+          (let [_ (.next r)
+                next-data (conj data (into {}
+                                           (map (fn [sub-parser]
+                                                  (sub-parser r)))
+                                           sub-parsers))]
+            (assert (= (.name (.getEventType r)) "END_TRANSACTION") (pr-str {:et (.name (.getEventType r))
+                                                                             :loc (-> r .getLocation #_.getSegmentTag)}))
+            (.next r)
+            (recur next-data))
+          (when-some [v (not-empty data)]
+            [k v]))))))
+
+
+
+(defn make-group-parser [k meta sch ]
+  (let [sub-parsers (into []
+                          (map (fn [[k meta sub-schema]]
+                                 (case (next-map-type sub-schema)
+                                   :segment (make-segment-parser k meta sub-schema)
+                                   :transaction  (make-transactions-parser k meta sub-schema))))
+                          (-> sch m/children first m/children))]
+    (fn [r]
+      ;(prn tag)
+      (assert (= (.name (.getEventType r)) "START_GROUP") )
+      (loop [data []]
+        (if (= (.name (.getEventType r)) "START_GROUP")
+          (let [_ (.next r)
+                next-data (conj data (into {}
+                                           (map (fn [sub-parser]
+                                                  (sub-parser r)))
+                                           sub-parsers))]
+            (assert (= (.name (.getEventType r)) "END_GROUP") (pr-str {:et (.name (.getEventType r))
+                                                                       :loc (-> r .getLocation #_.getSegmentTag)}))
+            (.next r)
+            (recur next-data))
+          (when-some [v (not-empty data)]
+            [k v]))))))
+
+(defn make-interchange-parser [sch]
+  (let [sub-parsers (into []
+                          (map (fn [[k meta sub-schema]]
+                                 (case (next-map-type sub-schema)
+                                   :segment (make-segment-parser k meta sub-schema)
+                                   :group (make-group-parser k meta sub-schema))))
+                          (m/children sch))]
+    (parse-starter
+      (fn [r]
+        (assert (= (.name (.getEventType r)) "START_INTERCHANGE"))
+        (loop [data []]
+          (if (= (.name (.getEventType r)) "START_INTERCHANGE")
+            (let [_ (.next r)
+                  next-data (conj data (into {}
+                                             (map (fn [sub-parser]
+                                                    (sub-parser r)))
+                                             sub-parsers))]
+              (assert (= (.name (.getEventType r)) "END_INTERCHANGE"))
+              (when (.hasNext r)
+                (.next r))
+              (recur next-data))
+            (not-empty data)))))))
+
 (defn make-parser [sch]
   (assert (-> sch m/properties :type (= :transaction)))
   (on-transaction
@@ -255,7 +347,7 @@
 
   (require 'malli.dev)
   (malli.dev/start!)
-  (def sch (-> (io/resource "x12_270.edn")
+  (def sch (-> (io/resource "x12_271.edn")
                io/reader
                PushbackReader.
                edn/read
@@ -266,11 +358,12 @@
   (.setProperty fact EDIInputFactory/EDI_IGNORE_EXTRANEOUS_CHARACTERS true)
   (.setProperty fact EDIInputFactory/EDI_VALIDATE_CONTROL_STRUCTURE false)
   (with-open [r (.createEDIStreamReader fact (io/input-stream (io/resource
-                                                                "270-3.edi"
-                                                                #_"271/section6-3.edi"
+                                                                #_"270-3.edi"
+                                                                "271/section6-3.edi"
                                                           #_"simple_with_binary_segment.edi"
                                                           #_"sample837-original.edi")))]
-    (let [consumer  (make-parser sch)]
+    (let [consumer  (make-interchange-parser sch)
+          #_(make-parser sch)]
       (consumer r))))
 
 
