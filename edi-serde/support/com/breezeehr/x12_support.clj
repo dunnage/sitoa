@@ -88,6 +88,73 @@
        (conj acc x)))
     data))
 
+(defn not-empty-dataset [ds]
+  (when-not (zero? (ds/row-count ds))
+    ds))
+
+(defn make-process-nocontext-element [spec]
+
+  (let [elements (get spec :elements)
+        ELEHEAD (get spec "ELEHEAD.TXT")
+        COMHEAD (get spec "COMHEAD.TXT")]
+    (fn inner-make-process-element [segment
+                                    {segid "Segment ID"
+                                     compid "Composite Data Element Number"
+                                     dtype "Data Element Type" :as element}
+                                    composite]
+      ;(prn element)
+      (let [main (if composite
+                   composite
+                   element)
+            seq (get main "Sequence")
+            generic-name (if (get element "items")
+                           (do
+                             (some-> (ds/filter COMHEAD
+                                                (fn [y]
+                                                  (and
+                                                    (= (get element "Data Element Number")
+                                                       (get y "Composite Data Element Number")))))
+                                     (ds/mapseq-reader)
+                                     (->> (xforms/some (keep #(get % "Composite Name"))))
+                                     snake-case-str
+                                     (format-sequence-number  seq)))
+                           (some-> (ds/filter ELEHEAD
+                                              (fn [y]
+                                                (and
+                                                  (= (get element "Data Element Number")
+                                                     (get y "Data Element Number")))))
+                                   (ds/mapseq-reader)
+                                   (->> (xforms/some (keep #(get % "Data Element Name"))))
+                                   snake-case-str
+                                   (format-sequence-number  seq)))]
+        [(cond generic-name
+               (keyword generic-name)
+               :default
+               (throw (ex-info "should not hit" {}))
+               #_(snake-case-keyword fallback-name))
+         (cond-> {:sequence (parse-long (if composite
+                                          (get composite "Sequence")
+                                          (get element "Sequence")))}
+                 true
+                 (assoc :optional true))
+         (case (get main "Data Element Type")
+           nil [:string {:data-element-number (get main "Data Element Number")
+                         :min (some-> (get main "Minimum Length") parse-long)
+                          :max (some-> (get main "Maximum Length") parse-long)}]
+           "ID" [:string {:min (some-> (get main "Minimum Length") parse-long)
+                          :max (some-> (get main "Maximum Length") parse-long)}]
+           "AN" [:string {:min (some-> (get main "Minimum Length") parse-long)
+                          :max (some-> (get main "Maximum Length") parse-long)}]
+           "DT" :time/local-date
+           "TM" :time/local-time
+           "R" 'decimal?
+           "N0" :int
+           "N2" [:int {:shift 100}]
+           "Composite" (into [:map {:type :composite}]
+                             (keep (fn [subitem]
+                                     (inner-make-process-element segment element (into subitem (get elements (get subitem "Data Element Number"))))))
+                             (ds/mapseq-reader (get element "items"))))]))))
+
 (defn make-process-element [spec]
 
   (let [elements (get spec :elements)
@@ -287,6 +354,33 @@
                                         (inner-make-process-element segment element (into subitem (get elements (get subitem "Data Element Number"))))))
                                 (ds/mapseq-reader (get element "items"))))])))))
 
+
+(defn process-nocontext-segment [spec]
+  (let [segment-detail (get spec "SEGDETL.TXT")
+        segment-head (get spec "SEGHEAD.TXT")
+        elements (get spec :elements)
+        composites (get spec :composites)
+        process-element (make-process-nocontext-element spec)]
+    (fn [{segid "Segment ID" segname "Segment Name":as x}]
+      (let [els (-> (ds/filter segment-detail (fn [y]
+                                                (= (get x "Segment ID")
+                                                   (get y "Segment ID"))))
+                    (ds/sort-by-column "Sequence"))
+            ]
+        ;(prn segid)
+        ;(prn usage)
+        ;(prn context)
+        [(snake-case-keyword segname)
+         (into [:map {:type       :segment
+                      :segment-id segid}]
+               (keep (fn [{el-num "Data Element Number" :as el}]
+                       (process-element x (if-some [seg (get elements el-num)]
+                                            (into el seg)
+                                            (assoc el "Data Element Type" "Composite"
+                                                      "items" (get composites el-num)))
+                                        nil)))
+               (ds/mapseq-reader els))]))))
+
 (defn process-segment [spec]
   (let [segment-detail (get spec "SEGDETL.TXT")
         elements (get spec :elements)
@@ -295,6 +389,8 @@
     (fn [{s           "Sequence" segid "Segment ID" max-use "Maximum Use"
           requirement "Requirement" loop-repeat "Loop Repeat"
           :as x}]
+      #_(when  (= segid "LE")
+        (prn x))
       (when-some [usage (->> (ds/filter-column (get *context-data* "CONDETL.TXT") "Segment ID" nil?)
                              ds/mapseq-reader
                              (xforms/some (keep #(get % "Usage"))))]
@@ -366,7 +462,7 @@
              requirement "Requirement" loop-repeat "Loop Repeat"
              :as first-seg}
             (ds/row-at loop-ds 0)]
-        ;  (prn loop-ds)
+        ;(prn loop-ds)
         (let [first-segment (let [{seq-num "Sequence" area "Area"} first-seg]
                               (binding [*context-data* (-> *context-data*
                                                            (update "CONDETL.TXT" ds/filter-column "Sequence" #(= % seq-num))
@@ -374,12 +470,13 @@
                                                            (update "CONDETL.TXT" ds/filter-column "Area" #(= % area))
                                                            (update "CONTEXT.TXT" ds/filter-column "Area" #(= % area)))]
                                 (single-ps first-seg)))
+              ;_ (prn first-seg)
               sibling-idx (next-sibling-loop-row loop-ds level)
               other-segments (not-empty (-> []
                                             (into (comp
                                                        (mapcat (fn [ds]
                                                                  (let [first-row (ds/row-at ds 0)]
-                                                                   ; (prn :chunk ds)
+                                                                    ;(prn :chunk (ds/filter-column ds "Segment ID" #(= % "LE")))
                                                                    (if (get first-row "Loop Identifier")
                                                                      [(process-loop-inner ds (parse-long (get first-row "Loop Level")))]
                                                                      (let [{seq-num "Sequence" area "Area"} first-row]
@@ -393,14 +490,42 @@
 
                                                   (partition-dataset-by
                                                     (if sibling-idx
-                                                      (ds/select-rows loop-ds (range 1 (dec sibling-idx)))
-                                                      (ds/drop-rows loop-ds [0]))
+                                                      (ds/select-rows loop-ds (range 1 sibling-idx))
+                                                      (take-while-dataset
+                                                        (ds/drop-rows loop-ds [0])
+                                                        #(>= (parse-long (get % "Loop Level")) level)))
                                                     #(= level (parse-long (get % "Loop Level")))))
                                             (into (when sibling-idx
                                                     (let [ds (ds/select-rows loop-ds (range sibling-idx (ds/row-count loop-ds)))]
+                                                      ;(prn :left-over (ds/filter-column ds "Segment ID" #(= % "LE")))
                                                       (when-some [first-row (ds/row-at ds 0)]
                                                         (assert (get first-row "Loop Identifier"))
-                                                        [(process-loop-inner ds (parse-long (get first-row "Loop Level")))]))))))
+                                                        [(process-loop-inner ds (parse-long (get first-row "Loop Level")))]))))
+                                            ;trailers
+                                            #_(into (let [area (get first-seg "Area")
+                                                        ds (some-> (if sibling-idx
+                                                                     (ds/select-rows loop-ds (range sibling-idx (ds/row-count loop-ds)))
+                                                                     (drop-while-dataset
+                                                                       (ds/drop-rows loop-ds [0])
+                                                                       #(>= (parse-long (get % "Loop Level")) level)))
+                                                                   #_(drop-while-dataset
+                                                                     #(> (parse-long (get % "Loop Level")) level))
+                                                                   not-empty-dataset
+                                                                   (ds/filter-column
+                                                                     "Area"
+                                                                     #(= % area)))]
+                                                    (when (and ds (not (zero? (ds/row-count ds))))
+                                                      (when-some [first-row (ds/row-at ds 0)]
+                                                        (prn :trailing-chunk (ds/filter-column ds "Segment ID" #(= % "LE")))
+                                                        (if (get first-row "Loop Identifier")
+                                                          [(process-loop-inner ds (parse-long (get first-row "Loop Level")))]
+                                                          (let [{seq-num "Sequence" area "Area"} first-row]
+                                                            (binding [*context-data* (-> *context-data*
+                                                                                         ;(update "CONDETL.TXT" ds/filter-column "Sequence" #(= % seq-num))
+                                                                                         ;(update "CONTEXT.TXT" ds/filter-column "Sequence" #(= % seq-num))
+                                                                                         (update "CONDETL.TXT" ds/filter-column "Area" #(= % area))
+                                                                                         (update "CONTEXT.TXT" ds/filter-column "Area" #(= % area)))]
+                                                              (ps ds))))))))))
               inner-map (cond-> [:map {:type :loop}]
                                 first-segment
                                 (conj first-segment)
@@ -450,7 +575,7 @@
             ["Set Transaction ID", "Area", "Sequence", "Segment ID", "Requirement",
              "Maximum Use", "Loop Level", "Loop Repeat", "Loop Identifier"]
             "SEGHEAD.TXT"
-            ["Segment Name", "Segment ID"]
+            ["Segment ID" "Segment Name"]
             "SEGDETL.TXT"
             ["Segment ID", "Sequence", "Data Element Number", "Requirement", "Repeat"]
             "COMHEAD.TXT"
@@ -511,14 +636,39 @@
          index-composites)
 
     ))
+(defn functional-group-schema [transaction {seghead "SEGHEAD.TXT" :as spec}]
+  (let [ps (process-nocontext-segment spec)]
+    (-> [:map {:type :group}]
+      (into
+        (map ps)
+        (-> seghead
+            (ds/filter-column "Segment ID" #{"GS" "GE"})
+            ds/mapseq-reader))
+      (conj [:transaction transaction])))
+  )
+(defn interchange-schema [transaction {seghead "SEGHEAD.TXT" :as spec}]
+  (let [ps (process-nocontext-segment spec)]
+    (-> [:map {:type :interchange}]
+        (into
+          (map ps )
+          (-> seghead
+              (ds/filter-column "Segment ID" #{"ISA" "IEA"})
+              ds/mapseq-reader))
+        (conj [:functional-groups [:sequential (functional-group-schema transaction spec)]])
+        ))
+
+  )
 
 (comment
 
+  (def full-ds (load-spec "specs/x12products/005010 Table Data"))
+  (interchange-schema :any full-ds)
   (def temp (ds/->dataset "specs/x12products/005010X279 Health Care Eligibility Benefit Inquiry and Response/270/seghead.txt"
-                          {:file-type :csv}))
+                          {:file-type :csv}))L
   (def spec (load-spec "specs/x12products/005010X279 Health Care Eligibility Benefit Inquiry and Response/270"))
   (def spec (load-spec "specs/x12products/005010X279 Health Care Eligibility Benefit Inquiry and Response/271"))
   (make-message spec)
+  (interchange-schema (make-message spec) full-ds)
   )
 
 
