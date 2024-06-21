@@ -3,7 +3,8 @@
             [clojure.java.io :as io]
             [malli.core :as m]
             [malli.experimental.time])
-  (:import (io.xlate.edi.stream EDIInputFactory EDIStreamReader)
+  (:import (io.xlate.edi.schema Schema SchemaFactory)
+           (io.xlate.edi.stream EDIInputFactory EDIStreamConstants EDIStreamConstants$Standards EDIStreamReader EDIOutputFactory EDIStreamWriter)
            (java.io PushbackReader)
            (java.time LocalDate LocalTime)
            (java.time.format DateTimeFormatter DateTimeFormatterBuilder)))
@@ -204,6 +205,56 @@
             (consume-segment r)
             [k m]))))))
 
+(defn make-composite-unparser [k meta sub-schema epos]
+  )
+
+(defn make-element-unparser [k meta sub-schema epos]
+  )
+
+(defn make-segment-unparser [k meta sch]
+  (let [nm (next-map-sch sch)
+        collection? (case (m/type sch)
+                      (:sequential :vector :set) true
+                      false)
+        element-pos (volatile! 0)
+        sub-unparsers (into []
+                          (map (fn [[k meta sub-schema]]
+                                 (let [epos (inc @element-pos)]
+                                   (vreset! element-pos (-> meta :sequence))
+                                   (case (next-map-type sub-schema)
+                                     :composite (make-composite-unparser k meta sub-schema epos)
+                                     nil (make-element-unparser k meta sub-schema epos)))))
+                          (m/children nm))
+        tag (-> nm m/properties :segment-id)
+        validator (m/coercer sch)]
+    (if collection?
+      (fn [w data]
+        ;(assert (= (.name (.getEventType r)) "START_SEGMENT"))
+        #_(loop [data data]
+          (if (= (-> r .getLocation .getSegmentTag) tag)
+            (do
+              (.next r)
+              (let [m (into {}
+                            (map (fn [sub-parser]
+                                   (sub-parser r)))
+                            sub-parsers)]
+                (consume-segment r)
+                (recur (conj data m))))
+            (when-some [coll (not-empty data)]
+              [k coll]))))
+      (fn [w data]
+        #_(assert (= (.name (.getEventType r)) "START_SEGMENT"))
+        #_(when (= (-> r .getLocation .getSegmentTag) tag)
+          (.next r)
+          (let [m (into {}
+                        (map (fn [sub-parser]
+                               (sub-parser r)))
+                        sub-parsers)]
+            (validator m)
+            ;(prn (.name (.getEventType r)))
+            (consume-segment r)
+            [k m]))))))
+
 (defn first-segment [sch]
   (when-some [nm (next-map-sch sch)]
     (case (-> nm m/properties :type)
@@ -269,10 +320,10 @@
                                  (case (next-map-type sub-schema)
                                    :segment (make-segment-parser k meta sub-schema)
                                    :loop (make-loop-parser k meta sub-schema))))
-                          (m/children sch))]
+                          (-> sch m/children first m/children))]
     (fn [r]
       ;(prn tag)
-      (assert (= (.name (.getEventType r)) "START_TRANSACTION"))
+      (assert (= (.name (.getEventType r)) "START_TRANSACTION") )
       (loop [data []]
         (if (= (.name (.getEventType r)) "START_TRANSACTION")
           (let [_ (.next r)
@@ -294,10 +345,9 @@
                           (map (fn [[k meta sub-schema]]
                                  (case (next-map-type sub-schema)
                                    :segment (make-segment-parser k meta sub-schema)
-                                   :transaction  (make-transactions-parser k meta sub-schema))))
+                                   :transaction-set  (make-transactions-parser k meta sub-schema))))
                           (-> sch m/children first m/children))]
     (fn [r]
-      ;(prn tag)
       (assert (= (.name (.getEventType r)) "START_GROUP") )
       (loop [data []]
         (if (= (.name (.getEventType r)) "START_GROUP")
@@ -323,25 +373,38 @@
     (parse-starter
       (fn [r]
         (assert (= (.name (.getEventType r)) "START_INTERCHANGE"))
-        (loop [data []]
-          (if (= (.name (.getEventType r)) "START_INTERCHANGE")
-            (let [_ (.next r)
-                  next-data (conj data (into {}
-                                             (map (fn [sub-parser]
-                                                    (sub-parser r)))
-                                             sub-parsers))]
-              (assert (= (.name (.getEventType r)) "END_INTERCHANGE"))
-              (when (.hasNext r)
-                (.next r))
-              (recur next-data))
-            (not-empty data)))))))
+        (let [_ (.next r)
+              next-data (into {}
+                              (map (fn [sub-parser]
+                                     (sub-parser r)))
+                              sub-parsers)]
+          (assert (= (.name (.getEventType r)) "END_INTERCHANGE"))
+          (when (.hasNext r)
+            (.next r))
+          next-data)))))
 
 (defn make-parser [sch]
-  (assert (-> sch m/properties :type (= :transaction)))
-  (on-transaction
-    (make-transaction-parser sch)))
+  (assert (-> sch m/properties :type (= :interchange)))
+  (make-interchange-parser sch))
 
-(defn make-unparser [sch])
+(defn make-interchange-unparser [sch]
+  (let [sub-unparsers (into []
+                            (keep (fn [[k meta sub-schema]]
+                                   (case (next-map-type sub-schema)
+                                     :segment (make-segment-unparser k meta sub-schema)
+                                     :group nil #_(make-group-parser k meta sub-schema))))
+                            (m/children sch))]
+    (fn [^EDIStreamWriter w data]
+      (let [sf (SchemaFactory/newFactory)
+            schema (.getControlSchema sf EDIStreamConstants$Standards/X12 (into-array String ["00501"]))]
+        (.setControlSchema w schema)
+        (.startInterchange w)
+
+
+        (.endInterchange w)))))
+(defn make-unparser [sch]
+  (assert (-> sch m/properties :type (= :interchange)))
+  (make-interchange-unparser sch))
 
 (comment
 
@@ -354,16 +417,31 @@
                (m/schema {:registry (merge (m/default-schemas) (malli.experimental.time/schemas))})
                ))
 
-  (def fact  (EDIInputFactory/newFactory))
-  (.setProperty fact EDIInputFactory/EDI_IGNORE_EXTRANEOUS_CHARACTERS true)
-  (.setProperty fact EDIInputFactory/EDI_VALIDATE_CONTROL_STRUCTURE false)
-  (with-open [r (.createEDIStreamReader fact (io/input-stream (io/resource
-                                                                #_"270-3.edi"
-                                                                "271/section6-3.edi"
-                                                          #_"simple_with_binary_segment.edi"
-                                                          #_"sample837-original.edi")))]
-    (let [consumer  (make-interchange-parser sch)
-          #_(make-parser sch)]
-      (consumer r))))
+
+  (let [fact  (EDIInputFactory/newFactory)]
+    #_(.setProperty fact EDIInputFactory/EDI_IGNORE_EXTRANEOUS_CHARACTERS true)
+    #_(.setProperty fact EDIInputFactory/EDI_VALIDATE_CONTROL_STRUCTURE false)
+    (with-open [r (.createEDIStreamReader fact (io/input-stream (io/resource
+                                                                  #_"270-3.edi"
+                                                                  "271/section6-3.edi"
+                                                                  #_"simple_with_binary_segment.edi"
+                                                                  #_"sample837-original.edi")))]
+      (let [consumer (make-interchange-parser sch)
+            #_(make-parser sch)]
+        (def edi-out (consumer r)))))
+
+
+  edi-out
+  (let [fact  (EDIOutputFactory/newFactory)
+        sch (-> (io/resource "x12_271.edn")
+                io/reader
+                PushbackReader.
+                edn/read
+                (m/schema {:registry (merge (m/default-schemas) (malli.experimental.time/schemas))})
+                )]
+    (with-open [r (.createEDIStreamWriter fact (io/output-stream "out.edi"))]
+      (let [producer (make-unparser sch)
+            #_(make-parser sch)]
+        (producer r edi-out)))))
 
 
