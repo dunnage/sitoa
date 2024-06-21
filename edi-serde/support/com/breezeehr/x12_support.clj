@@ -642,9 +642,14 @@
       (into
         (map ps)
         (-> seghead
-            (ds/filter-column "Segment ID" #{"GS" "GE"})
+            (ds/filter-column "Segment ID" #{"GE"})
             ds/mapseq-reader))
-      (conj [:transaction transaction])))
+      (conj [:transaction transaction])
+        (into
+          (map ps)
+          (-> seghead
+              (ds/filter-column "Segment ID" #{"GS"})
+              ds/mapseq-reader))))
   )
 (defn interchange-schema [transaction {seghead "SEGHEAD.TXT" :as spec}]
   (let [ps (process-nocontext-segment spec)]
@@ -652,9 +657,14 @@
         (into
           (map ps )
           (-> seghead
-              (ds/filter-column "Segment ID" #{"ISA" "IEA"})
+              (ds/filter-column "Segment ID" #{"ISA"})
               ds/mapseq-reader))
         (conj [:functional-groups [:sequential (functional-group-schema transaction spec)]])
+        (into
+          (map ps )
+          (-> seghead
+              (ds/filter-column "Segment ID" #{"IEA"})
+              ds/mapseq-reader))
         ))
 
   )
