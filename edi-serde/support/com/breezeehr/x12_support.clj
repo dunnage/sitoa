@@ -562,7 +562,7 @@
             (ps area-ds)))))))
 
 (defn make-message [{tx-set "SETDETL.TXT" :as spec}]
-  (-> [:map {:type :transaction}]
+  (-> [:map {:type :transaction-set}]
       (into (comp
               (mapcat (process-areas spec)))
             (partition-dataset-by tx-set #(> (parse-long (get % "Loop Level")) 0)))
@@ -642,13 +642,13 @@
       (into
         (map ps)
         (-> seghead
-            (ds/filter-column "Segment ID" #{"GE"})
+            (ds/filter-column "Segment ID" #{"GS"})
             ds/mapseq-reader))
-      (conj [:transaction transaction])
+      (conj [:transaction-sets [:sequential transaction]])
         (into
           (map ps)
           (-> seghead
-              (ds/filter-column "Segment ID" #{"GS"})
+              (ds/filter-column "Segment ID" #{"GE"})
               ds/mapseq-reader))))
   )
 (defn interchange-schema [transaction {seghead "SEGHEAD.TXT" :as spec}]
