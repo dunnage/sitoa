@@ -89,6 +89,86 @@
            (when-not (.isEmpty s)
              (bigdec s)))))
 
+(defn make-primitive-unparser [sch]
+  (case (->  sch m/deref m/type)
+    :enum (fn [^EDIStreamWriter w ^String s]
+            (if s
+              (.writeElement w s)
+              (.writeEmptyElement w)))
+    :string (fn [w ^String s]
+              (if s
+                (.writeElement w s)
+                (.writeEmptyElement w)))
+    :time/local-date (if-some [format (-> sch m/properties :format)]
+                       (fn [w ^LocalDate s]
+                         (if s
+                           (.writeElement w (.format (DateTimeFormatter/ofPattern format) s))
+                           (.writeEmptyElement w)))
+                       (fn [w ^LocalDate s]
+                         (if s
+                           (.writeElement w (.format (DateTimeFormatter/ofPattern "yyMMdd") s))
+                           (.writeEmptyElement w))))
+    :time/local-time (if-some [format (-> sch m/properties :format)]
+                       (fn [w ^LocalTime s]
+                         (if s
+                           (.writeElement w (.format (DateTimeFormatter/ofPattern format) s))
+                           (.writeEmptyElement w)))
+                       (fn [w ^LocalTime s]
+                         (if s
+                           (.writeElement w (.format (DateTimeFormatter/ofPattern "HHmmss") s))
+                           (.writeEmptyElement w))))
+    :int (let [fmt (if-some [min (-> sch m/properties :min-chars)]
+                     (str "%0" min "d")
+                     (str "%" "d"))]
+           (fn [w x]
+             (if x
+               (.writeElement w (format fmt x))
+               (.writeEmptyElement w))))
+    decimal? (fn [w ^String s]
+               (if s
+                 (.writeElement w (str s))
+                 (.writeEmptyElement w)))))
+
+(defn make-primitive-component-unparser [sch]
+  (case (->  sch m/deref m/type)
+    :enum (fn [^EDIStreamWriter w ^String s]
+            (if s
+              (.writeComponent w s)
+              (.writeEmptyComponent w)))
+    :string (fn [w ^String s]
+              (if s
+                (.writeComponent w s)
+                (.writeEmptyComponent w)))
+    :time/local-date (if-some [format (-> sch m/properties :format)]
+                       (fn [w ^LocalDate s]
+                         (if s
+                           (.writeComponent w (.format (DateTimeFormatter/ofPattern format) s))
+                           (.writeEmptyComponent w)))
+                       (fn [w ^LocalDate s]
+                         (if s
+                           (.writeComponent w (.format (DateTimeFormatter/ofPattern "yyMMdd") s))
+                           (.writeEmptyComponent w))))
+    :time/local-time (if-some [format (-> sch m/properties :format)]
+                       (fn [w ^LocalTime s]
+                         (if s
+                           (.writeComponent w (.format (DateTimeFormatter/ofPattern format) s))
+                           (.writeEmptyComponent w)))
+                       (fn [w ^LocalTime s]
+                         (if s
+                           (.writeComponent w (.format (DateTimeFormatter/ofPattern "HHmmss") s))
+                           (.writeEmptyComponent w))))
+    :int (let [fmt (if-some [min (-> sch m/properties :min-chars)]
+                     (str "%0" min "d")
+                     "%d")]
+           (fn [w x]
+             (if x
+               (.writeComponent w (format fmt x))
+               (.writeEmptyComponent w))))
+    decimal? (fn [w ^String s]
+               (if s
+                 (.writeComponent w (str s))
+                 (.writeEmptyComponent w)))))
+
 (defn make-element-parser [k meta sch from-pos]
   (let [element-pos (:sequence meta)
         skipper (skip-elements element-pos from-pos)
@@ -205,11 +285,67 @@
             (consume-segment r)
             [k m]))))))
 
-(defn make-composite-unparser [k meta sub-schema epos]
-  )
+(defn make-component-unparser [k meta sub-schema epos]
+  (let [unparser (make-primitive-component-unparser sub-schema)]
+    unparser))
+
+(defn empty-component-unparser [cnt]
+  (fn [w data]
+    (loop [cnt cnt]
+      (when (pos? cnt)
+        (do (.writeEmptyComponent w)
+            (recur (dec cnt)))))))
+
+(defn make-composite-unparser [k meta sch epos]
+  (let [nm (next-map-sch sch)
+        collection? (case (m/type sch)
+                      (:sequential :vector :set) true
+                      false)
+        element-pos (volatile! 0)
+        sub-unparsers (into []
+                            (mapcat (fn [[k meta sub-schema]]
+                                      (let [epos (inc @element-pos)]
+                                        (vreset! element-pos (-> meta :sequence))
+                                        (-> (if (> epos (-> meta :sequence))
+                                              [nil (empty-component-unparser (- epos (-> meta :sequence)) )]
+                                              [])
+                                            (conj
+                                              (case (next-map-type sub-schema)
+                                                ;:composite [k (make-composite-unparser k meta sub-schema epos)]
+                                                nil [k (make-component-unparser k meta sub-schema epos)]))))))
+                            (m/children nm))
+        tag (-> nm m/properties :segment-id)
+        ]
+    (if collection?
+      (fn [w data]
+        (run!
+          (fn [data]
+            (.writeStartElement w)
+            (run! (fn [[k unparse]]
+                    (unparse w (get data k)))
+                  sub-unparsers)
+            (.endElement w))
+          data))
+      (fn [w data]
+        (if data
+          (do
+            (.writeStartElement w)
+            (run! (fn [[k unparse]]
+                    (unparse w (get data k)))
+                  sub-unparsers)
+            (.endElement w))
+          (.writeEmptyElement w))))))
 
 (defn make-element-unparser [k meta sub-schema epos]
-  )
+  (let [unparser (make-primitive-unparser sub-schema)]
+    unparser))
+
+(defn empty-element-unparser [cnt]
+  (fn [w data]
+    (loop [cnt cnt]
+      (when (pos? cnt)
+        (do (.writeEmptyElement w)
+            (recur (dec cnt)))))))
 
 (defn make-segment-unparser [k meta sch]
   (let [nm (next-map-sch sch)
@@ -218,42 +354,35 @@
                       false)
         element-pos (volatile! 0)
         sub-unparsers (into []
-                          (map (fn [[k meta sub-schema]]
+                          (mapcat (fn [[k meta sub-schema]]
                                  (let [epos (inc @element-pos)]
                                    (vreset! element-pos (-> meta :sequence))
-                                   (case (next-map-type sub-schema)
-                                     :composite (make-composite-unparser k meta sub-schema epos)
-                                     nil (make-element-unparser k meta sub-schema epos)))))
+                                   (-> (if (> epos (-> meta :sequence))
+                                         [nil (empty-element-unparser (inc (- epos (-> meta :sequence))))]
+                                         [])
+                                     (conj
+                                       (case (next-map-type sub-schema)
+                                         :composite [k (make-composite-unparser k meta sub-schema epos)]
+                                         nil [k (make-element-unparser k meta sub-schema epos)]))))))
                           (m/children nm))
         tag (-> nm m/properties :segment-id)
         validator (m/coercer sch)]
     (if collection?
       (fn [w data]
-        ;(assert (= (.name (.getEventType r)) "START_SEGMENT"))
-        #_(loop [data data]
-          (if (= (-> r .getLocation .getSegmentTag) tag)
-            (do
-              (.next r)
-              (let [m (into {}
-                            (map (fn [sub-parser]
-                                   (sub-parser r)))
-                            sub-parsers)]
-                (consume-segment r)
-                (recur (conj data m))))
-            (when-some [coll (not-empty data)]
-              [k coll]))))
+        (run!
+          (fn [data]
+            (.writeStartSegment w tag)
+            (run! (fn [[k unparse]]
+                    (unparse w (get data k)))
+                  sub-unparsers)
+            (.writeEndSegment w))
+          data))
       (fn [w data]
-        #_(assert (= (.name (.getEventType r)) "START_SEGMENT"))
-        #_(when (= (-> r .getLocation .getSegmentTag) tag)
-          (.next r)
-          (let [m (into {}
-                        (map (fn [sub-parser]
-                               (sub-parser r)))
-                        sub-parsers)]
-            (validator m)
-            ;(prn (.name (.getEventType r)))
-            (consume-segment r)
-            [k m]))))))
+        (.writeStartSegment w tag)
+        (run! (fn [[k unparse]]
+                (unparse w (get data k)))
+              sub-unparsers)
+        (.writeEndSegment w)))))
 
 (defn first-segment [sch]
   (when-some [nm (next-map-sch sch)]
@@ -387,20 +516,89 @@
   (assert (-> sch m/properties :type (= :interchange)))
   (make-interchange-parser sch))
 
+(defn make-loop-unparser [k meta sch]
+  (if-some [nm (next-map-sch sch)]
+    (let [collection? (case (m/type sch)
+                        (:sequential :vector :set) true
+                        false)
+          sub-unparsers (into []
+                              (keep (fn [[k meta sub-schema]]
+                                      (case (next-map-type sub-schema)
+                                        :segment [k (make-segment-unparser k meta sub-schema)]
+                                        :loop  [k (make-loop-unparser k meta sub-schema)])))
+                              (m/children nm))
+          tag (some-> nm first-segment m/properties :segment-id)]
+      (if collection?
+        (fn [w data]
+          (run!
+            (fn [transaction-set-data]
+              (run!
+                (fn [[k unparser]]
+                  (when-some [subdata (get transaction-set-data k)]
+                    (unparser w subdata)))
+                sub-unparsers))
+            data)
+          )
+        (fn [w transaction-set-data]
+          (run!
+            (fn [[k unparser]]
+              (when-some [subdata (get transaction-set-data k)]
+                (unparser w subdata)))
+            sub-unparsers))))
+    (assert false)
+    #_(fn [r]nil)))
+
+(defn make-transactions-unparser [k meta sch]
+  (let [sub-unparsers (into []
+                            (keep (fn [[k meta sub-schema]]
+                                    (case (next-map-type sub-schema)
+                                      :segment [k (make-segment-unparser k meta sub-schema)]
+                                      :loop  [k (make-loop-unparser k meta sub-schema)])))
+                            (-> sch m/children first m/children))]
+    (fn [^EDIStreamWriter w data]
+      (run!
+        (fn [transaction-set-data]
+          (run!
+            (fn [[k unparser]]
+              (when-some [subdata (get transaction-set-data k)]
+                (unparser w subdata)))
+            sub-unparsers))
+        data))))
+
+(defn make-group-unparser [k meta sch]
+  (let [sub-unparsers (into []
+                            (keep (fn [[k meta sub-schema]]
+                                    (case (next-map-type sub-schema)
+                                      :segment [k (make-segment-unparser k meta sub-schema)]
+                                      :transaction-set  [k (make-transactions-unparser k meta sub-schema)])))
+                            (-> sch m/children first m/children))]
+    (fn [^EDIStreamWriter w data]
+      (run!
+        (fn [group-data]
+          (run!
+            (fn [[k unparser]]
+              (when-some [subdata (get group-data k)]
+                (unparser w subdata)))
+            sub-unparsers))
+        data))))
+
 (defn make-interchange-unparser [sch]
   (let [sub-unparsers (into []
                             (keep (fn [[k meta sub-schema]]
                                    (case (next-map-type sub-schema)
-                                     :segment (make-segment-unparser k meta sub-schema)
-                                     :group nil #_(make-group-parser k meta sub-schema))))
+                                     :segment [k (make-segment-unparser k meta sub-schema)]
+                                     :group [k (make-group-unparser k meta sub-schema)])))
                             (m/children sch))]
     (fn [^EDIStreamWriter w data]
       (let [sf (SchemaFactory/newFactory)
             schema (.getControlSchema sf EDIStreamConstants$Standards/X12 (into-array String ["00501"]))]
         (.setControlSchema w schema)
         (.startInterchange w)
-
-
+        (run!
+          (fn [[k unparser]]
+            (when-some [subdata (get data k)]
+              (unparser w subdata)))
+          sub-unparsers)
         (.endInterchange w)))))
 (defn make-unparser [sch]
   (assert (-> sch m/properties :type (= :interchange)))
@@ -439,6 +637,8 @@
                 edn/read
                 (m/schema {:registry (merge (m/default-schemas) (malli.experimental.time/schemas))})
                 )]
+    (.setProperty fact EDIOutputFactory/PRETTY_PRINT true)
+    (.setProperty fact EDIOutputFactory/TRUNCATE_EMPTY_ELEMENTS true)
     (with-open [r (.createEDIStreamWriter fact (io/output-stream "out.edi"))]
       (let [producer (make-unparser sch)
             #_(make-parser sch)]

@@ -145,11 +145,28 @@
                           :max (some-> (get main "Maximum Length") parse-long)}]
            "AN" [:string {:min (some-> (get main "Minimum Length") parse-long)
                           :max (some-> (get main "Maximum Length") parse-long)}]
-           "DT" :time/local-date
-           "TM" :time/local-time
-           "R" 'decimal?
-           "N0" :int
-           "N2" [:int {:shift 100}]
+           "DT" [:time/local-date (cond-> {:min-chars (some-> (get main "Minimum Length") parse-long)
+                                           :max-chars (some-> (get main "Maximum Length") parse-long)}
+                                          (= (some-> (get main "Minimum Length") parse-long)
+                                             (some-> (get main "Maximum Length") parse-long))
+                                          (assoc :format (case (some-> (get main "Minimum Length") parse-long)
+                                                           8 "yyyyMMdd"
+                                                           6 "yyMMdd")))]
+           "TM" [:time/local-time (cond-> {:min-chars (some-> (get main "Minimum Length") parse-long)
+                                           :max-chars (some-> (get main "Maximum Length") parse-long)}
+                                          (= (some-> (get main "Minimum Length") parse-long)
+                                             (some-> (get main "Maximum Length") parse-long))
+                                          (assoc :format (case (some-> (get main "Minimum Length") parse-long)
+                                                           8 "HHmmssSS"
+                                                           6 "HHmmss"
+                                                           4 "HHmm")))]
+           "R" ['decimal? {:min-chars (some-> (get main "Minimum Length") parse-long)
+                           :max-chars (some-> (get main "Maximum Length") parse-long)}]
+           "N0" [:int {:min-chars (some-> (get main "Minimum Length") parse-long)
+                       :max-chars (some-> (get main "Maximum Length") parse-long)}]
+           "N2" [:int {:min-chars (some-> (get main "Minimum Length") parse-long)
+                       :max-chars (some-> (get main "Maximum Length") parse-long)
+                       :shift 100}]
            "Composite" (into [:map {:type :composite}]
                              (keep (fn [subitem]
                                      (inner-make-process-element segment element (into subitem (get elements (get subitem "Data Element Number"))))))
@@ -347,8 +364,11 @@
              "DT" :time/local-date
              "TM" :time/local-time
              "R" 'decimal?
-             "N0" :int
-             "N2" [:int {:shift 100}]
+             "N0" [:int {:min-chars (some-> (get main "Minimum Length") parse-long)
+                         :max-chars (some-> (get main "Maximum Length") parse-long)}]
+             "N2" [:int {:min-chars (some-> (get main "Minimum Length") parse-long)
+                         :max-chars (some-> (get main "Maximum Length") parse-long)
+                         :shift 100}]
              "Composite" (into [:map {:type :composite}]
                                 (keep (fn [subitem]
                                         (inner-make-process-element segment element (into subitem (get elements (get subitem "Data Element Number"))))))
