@@ -247,14 +247,29 @@
             (consume-composite r)
             [k m]))))))
 
+(defn collect-extra-elements [r]
+  (loop [data []]
+    (case (.name (.getEventType r))
+      "END_SEGMENT"
+      (do
+        (when (.hasNext r)
+          (.next r))
+        data)
+      "ELEMENT_DATA"
+      (let [el (.getText r)]
+          (when (.hasNext r)
+            (.next r))
+          (recur (conj data el))))))
+
 (defn consume-segment [r]
-  (assert (.name (.getEventType r)) "END_SEGMENT")
   (if (= (.name (.getEventType r)) "END_SEGMENT")
     (when (.hasNext r)
       (.next r))
-    #_(when (.hasNext r)
-      (.next r)
-      (recur r))))
+    (let [loc (.getLocation r)
+          extra (collect-extra-elements r)]
+      (prn  :extra-data-on-segment (str loc) extra )
+
+      )))
 
 (defn make-segment-parser [k meta sch]
   (let [nm (next-map-sch sch)
@@ -274,12 +289,8 @@
         validator (m/coercer sch)]
     (if collection?
       (fn [r]
-        (case (.name (.getEventType r))
-          "START_SEGMENT" nil
-          "ELEMENT_DATA" (prn (.getText r)))
         (assert (= (.name (.getEventType r)) "START_SEGMENT") (.name (.getEventType r)))
         (loop [data []]
-          ;(prn (-> r .getLocation .getSegmentTag) tag)
           (if (= (-> r .getLocation .getSegmentTag) tag)
             (do
               (.next r)
