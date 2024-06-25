@@ -357,8 +357,8 @@
                           (mapcat (fn [[k meta sub-schema]]
                                  (let [epos (inc @element-pos)]
                                    (vreset! element-pos (-> meta :sequence))
-                                   (-> (if (> epos (-> meta :sequence))
-                                         [nil (empty-element-unparser (inc (- epos (-> meta :sequence))))]
+                                   (-> (if (> (-> meta :sequence) epos)
+                                         [[nil (empty-element-unparser (- (-> meta :sequence) epos))]]
                                          [])
                                      (conj
                                        (case (next-map-type sub-schema)
