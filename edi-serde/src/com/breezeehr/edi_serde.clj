@@ -68,6 +68,17 @@
                   (.appendOptional (DateTimeFormatter/ofPattern "HHmm"))
                   .toFormatter))
 
+(defn datetime-multiformat [formats]
+  (assert (not-empty formats))
+  (if (= (count formats) 1 )
+    (DateTimeFormatter/ofPattern (first formats))
+    (.toFormatter
+      (reduce
+        (fn [^DateTimeFormatterBuilder acc fmt]
+          (.appendOptional acc (DateTimeFormatter/ofPattern fmt)))
+        (DateTimeFormatterBuilder.)
+        formats))))
+
 (defn make-primitive-parser [sch]
   (case (->  sch m/deref m/type)
     :enum (fn [^String s]
@@ -76,12 +87,17 @@
     :string (fn [^String s]
               (when-not (.isEmpty s)
                 s))
-    :time/local-date (fn [s]
-                       (when-not (.isEmpty s)
-                         (LocalDate/parse s edi-date)))
-    :time/local-time (fn [s]
-                       (when-not (.isEmpty s)
-                         (LocalTime/parse s edi-time)))
+    :time/local-date (let [formats (-> sch m/properties :formats)
+                           format (datetime-multiformat formats)]
+                       (fn [s]
+                         (when-not (.isEmpty s)
+                           (LocalDate/parse s format))))
+
+    :time/local-time (let [formats (-> sch m/properties :formats)
+                           format (datetime-multiformat formats)]
+                       (fn [s]
+                         (when-not (.isEmpty s)
+                           (LocalTime/parse s format))))
     :int (fn [^String s]
            (when-not (.isEmpty s)
              (Long/parseLong s)))
@@ -99,21 +115,20 @@
               (if s
                 (.writeElement w s)
                 (.writeEmptyElement w)))
-    :time/local-date (if-some [format (-> sch m/properties :format)]
-                       (fn [w ^LocalDate s]
+    :time/local-date (if-some [formats (-> sch m/properties :formats)]
+                       (let [fmt (DateTimeFormatter/ofPattern (first formats))]
+                         (fn [w ^LocalDate s]
+                           (if s
+                             (.writeElement w (.format fmt s))
+                             (.writeEmptyElement w))))
+                       (assert false))
+    :time/local-time (if-some [formats (-> sch m/properties :formats)]
+                       (let [fmt (DateTimeFormatter/ofPattern (first formats))]
+                         (fn [w ^LocalTime s]
                          (if s
-                           (.writeElement w (.format (DateTimeFormatter/ofPattern format) s))
-                           (.writeEmptyElement w)))
-                       (fn [w ^LocalDate s]
-                         (if s
-                           (.writeElement w (.format (DateTimeFormatter/ofPattern "yyMMdd") s))
+                           (.writeElement w (.format fmt s))
                            (.writeEmptyElement w))))
-    :time/local-time (if-some [format (-> sch m/properties :format)]
-                       (fn [w ^LocalTime s]
-                         (if s
-                           (.writeElement w (.format (DateTimeFormatter/ofPattern format) s))
-                           (.writeEmptyElement w)))
-                       (fn [w ^LocalTime s]
+                       (assert false) #_(fn [w ^LocalTime s]
                          (if s
                            (.writeElement w (.format (DateTimeFormatter/ofPattern "HHmmss") s))
                            (.writeEmptyElement w))))
