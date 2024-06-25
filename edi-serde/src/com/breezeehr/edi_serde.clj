@@ -619,6 +619,14 @@
   (assert (-> sch m/properties :type (= :interchange)))
   (make-interchange-unparser sch))
 
+(defonce default-output-factory  (EDIOutputFactory/newFactory) )
+(.setProperty default-output-factory EDIOutputFactory/PRETTY_PRINT true)
+(.setProperty default-output-factory EDIOutputFactory/TRUNCATE_EMPTY_ELEMENTS true)
+
+(defonce default-input-factory  (EDIInputFactory/newFactory))
+#_(.setProperty default-input-factory EDIInputFactory/EDI_IGNORE_EXTRANEOUS_CHARACTERS true)
+(.setProperty default-input-factory EDIInputFactory/EDI_VALIDATE_CONTROL_STRUCTURE true)
+
 (comment
 
   (require 'malli.dev)
@@ -631,32 +639,20 @@
                ))
 
 
-  (let [fact  (EDIInputFactory/newFactory)]
-    #_(.setProperty fact EDIInputFactory/EDI_IGNORE_EXTRANEOUS_CHARACTERS true)
-    #_(.setProperty fact EDIInputFactory/EDI_VALIDATE_CONTROL_STRUCTURE false)
-    (with-open [r (.createEDIStreamReader fact (io/input-stream (io/resource
-                                                                  #_"270-3.edi"
-                                                                  "271/section6-3.edi"
-                                                                  #_"simple_with_binary_segment.edi"
-                                                                  #_"sample837-original.edi")))]
-      (let [consumer (make-parser sch)
-            #_(make-parser sch)]
-        (def edi-out (consumer r)))))
+  (with-open [r (.createEDIStreamReader default-input-factory (io/input-stream (io/resource
+                                                                #_"270-3.edi"
+                                                                "271/section6-3.edi"
+                                                                #_"simple_with_binary_segment.edi"
+                                                                #_"sample837-original.edi")))]
+    (let [consumer (make-parser sch)
+          #_(make-parser sch)]
+      (def edi-out (consumer r))))
 
 
   edi-out
-  (let [fact  (EDIOutputFactory/newFactory)
-        sch (-> (io/resource "x12_271.edn")
-                io/reader
-                PushbackReader.
-                edn/read
-                (m/schema {:registry (merge (m/default-schemas) (malli.experimental.time/schemas))})
-                )]
-    (.setProperty fact EDIOutputFactory/PRETTY_PRINT true)
-    (.setProperty fact EDIOutputFactory/TRUNCATE_EMPTY_ELEMENTS true)
-    (with-open [r (.createEDIStreamWriter fact (io/output-stream "out.edi"))]
-      (let [producer (make-unparser sch)
-            #_(make-parser sch)]
-        (producer r edi-out)))))
+  (with-open [r (.createEDIStreamWriter default-output-factory (io/output-stream "out.edi"))]
+    (let [producer (make-unparser sch)
+          #_(make-parser sch)]
+      (producer r edi-out))))
 
 
