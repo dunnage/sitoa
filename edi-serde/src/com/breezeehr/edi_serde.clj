@@ -274,8 +274,12 @@
         validator (m/coercer sch)]
     (if collection?
       (fn [r]
-        (assert (= (.name (.getEventType r)) "START_SEGMENT"))
+        (case (.name (.getEventType r))
+          "START_SEGMENT" nil
+          "ELEMENT_DATA" (prn (.getText r)))
+        (assert (= (.name (.getEventType r)) "START_SEGMENT") (.name (.getEventType r)))
         (loop [data []]
+          ;(prn (-> r .getLocation .getSegmentTag) tag)
           (if (= (-> r .getLocation .getSegmentTag) tag)
             (do
               (.next r)
@@ -492,7 +496,7 @@
                                    :transaction-set  (make-transactions-parser k meta sub-schema))))
                           (-> sch m/children first m/children))]
     (fn [r]
-      (assert (= (.name (.getEventType r)) "START_GROUP") )
+      (assert (= (.name (.getEventType r)) "START_GROUP") (.name (.getEventType r)) )
       (loop [data []]
         (if (= (.name (.getEventType r)) "START_GROUP")
           (let [_ (.next r)
@@ -641,7 +645,9 @@
 
   (with-open [r (.createEDIStreamReader default-input-factory (io/input-stream (io/resource
                                                                 #_"270-3.edi"
-                                                                "271/section6-3.edi"
+                                                                #_"271/section6-3.edi"
+                                                                "271/sample-Acacianna.edi"
+                                                                #_"271/sample-BaxterDallesandro.edi"
                                                                 #_"simple_with_binary_segment.edi"
                                                                 #_"sample837-original.edi")))]
     (let [consumer (make-parser sch)
