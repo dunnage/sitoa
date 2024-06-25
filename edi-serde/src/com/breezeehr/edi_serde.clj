@@ -639,7 +639,7 @@
                                                                   "271/section6-3.edi"
                                                                   #_"simple_with_binary_segment.edi"
                                                                   #_"sample837-original.edi")))]
-      (let [consumer (make-interchange-parser sch)
+      (let [consumer (make-parser sch)
             #_(make-parser sch)]
         (def edi-out (consumer r)))))
 
