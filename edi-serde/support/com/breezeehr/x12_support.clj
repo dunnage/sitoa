@@ -145,21 +145,30 @@
                           :max (some-> (get main "Maximum Length") parse-long)}]
            "AN" [:string {:min (some-> (get main "Minimum Length") parse-long)
                           :max (some-> (get main "Maximum Length") parse-long)}]
-           "DT" [:time/local-date (cond-> {:min-chars (some-> (get main "Minimum Length") parse-long)
+           "DT" [:time/local-date (-> {:min-chars (some-> (get main "Minimum Length") parse-long)
                                            :max-chars (some-> (get main "Maximum Length") parse-long)}
-                                          (= (some-> (get main "Minimum Length") parse-long)
-                                             (some-> (get main "Maximum Length") parse-long))
-                                          (assoc :format (case (some-> (get main "Minimum Length") parse-long)
-                                                           8 "yyyyMMdd"
-                                                           6 "yyMMdd")))]
-           "TM" [:time/local-time (cond-> {:min-chars (some-> (get main "Minimum Length") parse-long)
-                                           :max-chars (some-> (get main "Maximum Length") parse-long)}
-                                          (= (some-> (get main "Minimum Length") parse-long)
-                                             (some-> (get main "Maximum Length") parse-long))
-                                          (assoc :format (case (some-> (get main "Minimum Length") parse-long)
-                                                           8 "HHmmssSS"
-                                                           6 "HHmmss"
-                                                           4 "HHmm")))]
+                                      (assoc :formats
+                                                 (into []
+                                                       (map (fn [x]
+                                                              (case x
+                                                                8 "yyyyMMdd"
+                                                                6 "yyMMdd")
+                                                              ))
+                                                       (reverse (range (some-> (get main "Minimum Length") parse-long)
+                                                              (inc (some-> (get main "Maximum Length") parse-long))
+                                                              2)))))]
+           "TM" [:time/local-time (-> {:min-chars (some-> (get main "Minimum Length") parse-long)
+                                       :max-chars (some-> (get main "Maximum Length") parse-long)}
+                                      (assoc :formats
+                                             (into []
+                                                   (map (fn [x]
+                                                          (case x
+                                                            8 "HHmmssSS"
+                                                            6 "HHmmss"
+                                                            4 "HHmm")))
+                                                   (reverse (range (some-> (get main "Minimum Length") parse-long)
+                                                          (inc (some-> (get main "Maximum Length") parse-long))
+                                                          2)))))]
            "R" ['decimal? {:min-chars (some-> (get main "Minimum Length") parse-long)
                            :max-chars (some-> (get main "Maximum Length") parse-long)}]
            "N0" [:int {:min-chars (some-> (get main "Minimum Length") parse-long)
@@ -361,8 +370,30 @@
                               items))))
              "AN" [:string {:min (some-> (get main "Minimum Length") parse-long)
                             :max (some-> (get main "Maximum Length") parse-long)}]
-             "DT" :time/local-date
-             "TM" :time/local-time
+             "DT" [:time/local-date (-> {:min-chars (some-> (get main "Minimum Length") parse-long)
+                                         :max-chars (some-> (get main "Maximum Length") parse-long)}
+                                        (assoc :formats
+                                               (into []
+                                                     (map (fn [x]
+                                                            (case x
+                                                              8 "yyyyMMdd"
+                                                              6 "yyMMdd")
+                                                            ))
+                                                     (reverse (range (some-> (get main "Minimum Length") parse-long)
+                                                                     (inc (some-> (get main "Maximum Length") parse-long))
+                                                                     2)))))]
+             "TM" [:time/local-time (-> {:min-chars (some-> (get main "Minimum Length") parse-long)
+                                         :max-chars (some-> (get main "Maximum Length") parse-long)}
+                                        (assoc :formats
+                                               (into []
+                                                     (map (fn [x]
+                                                            (case x
+                                                              8 "HHmmssSS"
+                                                              6 "HHmmss"
+                                                              4 "HHmm")))
+                                                     (reverse (range (some-> (get main "Minimum Length") parse-long)
+                                                                     (inc (some-> (get main "Maximum Length") parse-long))
+                                                                     2)))))]
              "R" 'decimal?
              "N0" [:int {:min-chars (some-> (get main "Minimum Length") parse-long)
                          :max-chars (some-> (get main "Maximum Length") parse-long)}]
