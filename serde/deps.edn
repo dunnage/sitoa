@@ -1,6 +1,6 @@
 {:paths ["src" "resources"]
  :deps  {org.clojure/clojure                         {:mvn/version "1.11.2"}
-         metosin/malli                               {:mvn/version "0.16.1"}
+         metosin/malli                               {:mvn/version "0.16.4"}
          io.pedestal/pedestal.log                    {:mvn/version "0.5.10"},
          com.gfredericks/test.chuck                  {:mvn/version "0.2.13"}
          io.github.dunnage.sitoa/bootstrapped-schema {:local/root "../bootstrapped-schema"
