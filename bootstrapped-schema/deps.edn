@@ -3,7 +3,7 @@
          metosin/malli                          {:mvn/version "0.16.4"}
          com.gfredericks/test.chuck             {:mvn/version "0.2.13"}
          ;; https://mvnrepository.com/artifact/org.glassfish.jaxb/xsom
-         org.glassfish.jaxb/xsom                {:mvn/version "4.0.0"}
+         org.glassfish.jaxb/xsom                {:mvn/version "4.0.5"}
          ;; https://mvnrepository.com/artifact/jakarta.xml.bind/jakarta.xml.bind-api
          jakarta.xml.bind/jakarta.xml.bind-api  {:mvn/version "4.0.0"}
          org.glassfish.jaxb/jaxb-runtime        {:mvn/version "4.0.0"}
