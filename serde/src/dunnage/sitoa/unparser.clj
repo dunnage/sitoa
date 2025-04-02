@@ -415,13 +415,13 @@
               attribute-writers)
         (if value-wrapped
           (let [[k valuewriter] (transduce
-                                  (comp (filter #(= :value (nth % 0)))
+                                  (comp (filter #(= :xml/value (nth % 0)))
                                         (halt-when some?))
                                   (fn ([acc] acc)
                                     ([acc nv] nv))
                                   nil
                                   tag-writers)
-                value (:value data)]
+                value (:xml/value data)]
             (valuewriter value w))
           (run! (fn [[key subwriter seq?]]
                   (if seq?

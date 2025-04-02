@@ -380,7 +380,7 @@
             ]
         (if value-wrapped
           (let [[k valueparser] (transduce
-                                  (comp (filter #(= :value (nth % 0)))
+                                  (comp (filter #(= :xml/value (nth % 0)))
                                         (halt-when some?))
                                   (fn  ([acc] acc)
                                     ([acc nv] nv))
@@ -391,7 +391,7 @@
             ;(ensure-safe-next-tag r)
             #_(when-not in-seq-ex
                   (safe-next-tag r))
-            (persistent! (assoc! val2 :value parsed-value)))
+            (persistent! (assoc! val2 :xml/value parsed-value)))
           (do
             (when-not in-seq-ex
               (safe-next-tag r))
