@@ -10,7 +10,7 @@
            (javax.xml.parsers SAXParserFactory)
            (com.sun.xml.xsom XSRestrictionSimpleType XSSimpleType XmlString XSComplexType XSTerm XSParticle XSModelGroup XSUnionSimpleType XSListSimpleType XSComponent XSDeclaration XSModelGroupDecl XSWildcard XSWildcard$Any XSType ForeignAttributes XSAttributeUse XSFacet XSSchemaSet XSElementDecl XSVariety)
            (org.xml.sax ErrorHandler SAXParseException)
-           (java.net URL)
+           (java.net URI)
            (java.time LocalDate LocalDateTime)
            (clojure.lang IReduceInit)))
 
@@ -28,12 +28,18 @@
   (or (some-> x .getPrimitiveType .getName) (.getName x) #_"no-primative"))
 
 (defn uri->ns [^String x]
-  (let [url
-        ^URL (io/as-url x)]
-    (-> []
-        (into (reverse (clojure.string/split (.getHost url) #"\.")))
-        (into (remove empty?) (clojure.string/split (.getPath url) #"\/"))
-        (->> (clojure.string/join ".")))))
+  (let [uri
+        (new URI x)]
+    ;(prn (bean uri))
+    (case (.getScheme uri )
+      "urn" (-> []
+                (into (reverse (clojure.string/split (str (.getSchemeSpecificPart uri)) #":")))
+                (->> (clojure.string/join ".")))
+      (-> []
+          (into (reverse (clojure.string/split (.getHost uri) #"\.")))
+          (into (remove empty?) (clojure.string/split (.getPath uri) #"\/"))
+          (->> (clojure.string/join "."))))
+    ))
 
 (defn not-empty-string [^String x]
   (when-not (.isEmpty x)
@@ -344,7 +350,7 @@
         empt :any
         (and attr-map simple) (-> attr-map
                                   (update 1 assoc :xml/value-wrapped true)
-                                  (conj [:value {} simple]))
+                                  (conj [:xml/value {} simple]))
         (and attr-map complex (= (complex-tag complex) :map))
         (let [[_tag config & rest] complex]
           (-> attr-map
@@ -352,7 +358,7 @@
               (into rest)))
         (and attr-map complex) (-> attr-map
                                    (update 1 assoc :xml/value-wrapped true)
-                                   (conj [:value {} complex]))
+                                   (conj [:xml/value {} complex]))
         (and attr-map (nil? complex)) attr-map
         simple simple
         complex complex)))
@@ -414,6 +420,11 @@
           prim-keyword
           (case (get-primitive-type x)
             "decimal" prim-keyword                          ;java.math.BigDecimal
+            "float" prim-keyword
+            "boolean" prim-keyword
+            "double" prim-keyword
+            "base64Binary" prim-keyword
+            "anyURI" prim-keyword
             "date", prim-keyword                            ;javax.xml.datatype.XMLGregorianCalendar
             "dateTime", prim-keyword                        ;javax.xml.datatype.XMLGregorianCalendar
             "string", (malli-string-primitive x context)
