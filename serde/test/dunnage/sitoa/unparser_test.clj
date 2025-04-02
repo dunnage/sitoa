@@ -28,8 +28,8 @@
                        :StructuresVersion  "20170715",
                        :ECLVersion         "20170715",
                        :Header
-                       {:To                    {:Qualifier "P", :value "7701630"},
-                        :From                  {:Qualifier "C", :value "77777777"},
+                       {:To                    {:Qualifier "P", :xml/value  "7701630"},
+                        :From                  {:Qualifier "C", :xml/value  "77777777"},
                         :MessageID             "1234567",
                         :SentTime              (LocalDateTime/parse "2010-10-01T08:15:22"),
                         :Security
