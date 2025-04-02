@@ -10,7 +10,8 @@
 (comment
   (set! *print-namespace-maps* false)
   (xsd->schema {:default-ns "xsd"} (io/resource "XMLSchema.xsd"))
-  (xsd->schema {:default-ns "fop"} (io/resource "fop.xsd"))
+  (with-open [writer (io/writer "resources/fop.edn")]
+    (fipp.edn/pprint (m/form (xsd->schema {:default-ns "fop"} (io/resource "fop.xsd"))) {:writer writer}))
 
   (def message-schema (m/schema (xsd->registry {:default-ns "script"} (io/resource "NCPDP_20170715/transport.xsd"))
                                 {:registry (merge
