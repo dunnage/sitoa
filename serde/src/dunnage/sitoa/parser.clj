@@ -1,6 +1,7 @@
 (ns dunnage.sitoa.parser
   (:require [clojure.java.io :as io]
             [malli.core :as m]
+            [clojure.xml :as xml]
             [io.pedestal.log :as log]
             [malli.util :as mu])
   (:import
@@ -44,6 +45,25 @@
    :resolver XMLInputFactory/RESOLVER
    :support-dtd XMLInputFactory/SUPPORT_DTD})
 
+(defn debug-element [^XMLStreamReader r]
+  (case (.getEventType r)
+    1 {:type :START_ELEMENT :name (.getLocalName r)}
+    2 {:type :END_ELEMENT :name (.getLocalName r)}
+    3 {:type :PROCESSING_INSTRUCTION}
+    4 {:type :CHARACTERS :text (.getText r)}
+    5 {:type :COMMENT}
+    6 {:type :SPACE}
+    7 {:type :START_DOCUMENT}
+    8 {:type :END_DOCUMENT}
+    9 {:type :ENTITY_REFERENCE}
+    10 {:type :ATTRIBUTE}
+    11 {:type :DTD}
+    12 {:type :CDATA}
+    13 {:type :NAMESPACE}
+    14 {:type :NOTATION_DECLARATION}
+    15 {:type :ENTITY_DECLARATION}
+    ))
+
 (defn- make-input-factory ^XMLInputFactory [props]
   (let [fac (XMLInputFactory/newInstance)]
     (doseq [[k v] props
@@ -59,7 +79,7 @@
 (defn safe-next-tag ^long [^XMLStreamReader r]
   (when (.hasNext r)
     (loop [tok (.next r)]
-      ;(log/info tok)
+      (prn :safe-next-tag (debug-element r))
       (case tok
         (1 2 8)                                                 ;START_ELEMENT
         tok
@@ -70,6 +90,10 @@
         )))
   #_(when-not (= (.getEventType r) 8)
     (.nextTag r)))
+(defn assert-not-close! [^XMLStreamReader  r]
+  (case (.getEventType r)
+    2 (throw (ex-info "cannot start with close" {}))
+    nil))
 
 (defn safe-exit-tag [tag]
   (fn [^XMLStreamReader r]
@@ -87,6 +111,26 @@
             tok
             #_(recur r))
           tok)
+        (3 4 5 6 7 11)                                      ;COMMENT
+        (when (.hasNext r)
+          (.next r)
+          (recur r))))))
+
+(defn exit-tag [tag]
+  (fn [^XMLStreamReader r]
+    (let [tok (.getEventType r)]
+      ;(log/info tok)
+      (case tok
+        (1 8)                                             ;START_ELEMENT
+        (throw (ex-info (str "expected to exit " tag)  (debug-element r)))
+        (2)
+        (if (= tag (get-tag-kw r))
+          (if (.hasNext r)
+            (do (.next r)
+                (.getEventType r))
+            tok
+            #_(recur r))
+          (throw (ex-info (str "expected to exit " tag)  (debug-element r))))
         (3 4 5 6 7 11)                                      ;COMMENT
         (when (.hasNext r)
           (.next r)
@@ -132,24 +176,7 @@
 
 (declare -xml-parser make-tag-discriminator -sequential-parser)
 
-(defn debug-element [^XMLStreamReader r]
-  (case (.getEventType r)
-    1 {:type :START_ELEMENT :name (.getLocalName r)}
-    2 {:type :END_ELEMENT :name (.getLocalName r)}
-    3 {:type :PROCESSING_INSTRUCTION}
-    4 {:type :CHARACTERS :text (.getText r)}
-    5 {:type :COMMENT}
-    6 {:type :SPACE}
-    7 {:type :START_DOCUMENT}
-    8 {:type :END_DOCUMENT}
-    9 {:type :ENTITY_REFERENCE}
-    10 {:type :ATTRIBUTE}
-    11 {:type :DTD}
-    12 {:type :CDATA}
-    13 {:type :NAMESPACE}
-    14 {:type :NOTATION_DECLARATION}
-    15 {:type :ENTITY_DECLARATION}
-    ))
+
 (defn skip-closing-and-charactors [^XMLStreamReader r]
   (loop [tok (.getEventType r)]
     ;(log/info tok)
@@ -168,13 +195,23 @@
     (case tok
       1                                        ;START_ELEMENT
       nil
-      (2 3 4 5 6)                                ;COMMENT
+      (3 4 5 6)                                ;COMMENT
       (recur (.next r))
       (7 8) (assert false)                     ;START_DOCUMENT
       ))
   )
+
+(defn any-skip-parser
+  [^XMLStreamReader r]
+  (prn :any (debug-element r))
+  (let [txt (.getElementText r)]
+    ;(safe-exit-tag r)
+    ;(log/info :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
+    txt))
+
 (defn string-parser [x]
   (fn [^XMLStreamReader r]
+    (prn :string-parser (debug-element r))
     (let [txt (.getElementText r)]
       ;(safe-exit-tag r)
       ;(log/info :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
@@ -296,21 +333,24 @@
            (let [tagk (get-tag-kw r)]
              (if (= nexttagk tagk)
                (let [_ (assert (not (get val tagk)))
+                     is-empty? (.isEndElement r)
+                     _ (prn :is-empty? is-empty?)
                      val (assoc! val tagk (tag-parser r))
-                     exiter (safe-exit-tag nexttagk)]
+                     exiter (exit-tag nexttagk)]
                  (exiter r)
                  val
                  ;(recur (.getEventType r) val)
                  )
                (do (log/info :leave-start-next tagk :nexttagk nexttagk)
                    val)))
+           2 (reduced acc)
 
-           2                                                ;END_ELEMENT
-           (let [tagk (get-tag-kw r)]
-             (if (tags tagk)
-               (recur (.next r) val)
-               (do (log/info :leave tagk)
-                   val)))
+           ;2                                                ;END_ELEMENT
+           ;(let [tagk (get-tag-kw r)]
+           ;  (if (tags tagk)
+           ;    (recur (.next r) val)
+           ;    (do (log/info :leave tagk)
+           ;        val)))
            (3 4 5 6)                                        ;COMMENT
            (recur (.next r) val)
            (7 8) (assert false)                             ;START_DOCUMENT
@@ -345,23 +385,26 @@
                       (fn ([acc]acc)
                         ([acc [tag opts subschema]]
                          ;(log/info (m/form (m/deref subschema)))
-                         (conj acc [tag
-                                    (case (m/form (m/deref subschema))
-                                      :org.w3.www.2001.XMLSchema/dateTime
-                                      (-xml-parser subschema)
-                                      (case (-> subschema m/deref-all m/type)
-                                        :sequential (-sequential-parser tag subschema)
-                                        (:alt :cat :or) (wrap-next-before-tag (-xml-parser subschema))
-                                        (-xml-parser subschema)))
-                                    (case (-> subschema m/deref-all m/type)
-                                      (:alt :cat :or :sequential) (make-tag-discriminator subschema)
-                                      nil)])
+                         (let [dsubschema (-> subschema m/deref-all)]
+                           (conj acc [tag
+                                      (case (m/form (m/deref subschema))
+                                        :org.w3.www.2001.XMLSchema/dateTime
+                                        (-xml-parser subschema)
+                                         (case (-> dsubschema m/type)
+                                                :sequential (-sequential-parser tag dsubschema)
+                                                (:alt :cat :or) (wrap-next-before-tag (-xml-parser dsubschema))
+                                                (-xml-parser dsubschema)))
+                                      (case (-> dsubschema m/type)
+                                        (:alt :cat :or :sequential) (make-tag-discriminator dsubschema)
+                                        nil)]))
                          ))
                       [] children)
         tags        (into #{} (map first tag-parsers))
         ]
     (fn [^XMLStreamReader r]
+      (assert-not-close! r)
       (skip-characters r)
+      (assert-not-close! r)
       ;(when (= (.getEventType r) 4)
       ;  (safe-next-tag r))
       ;(assert (= (.getEventType r) 1) (pr-str (.getEventType r)
@@ -460,7 +503,7 @@
     (:? :*  :+  :repeat :sequential) (make-tag-discriminator (-single-sub-item x))
     :map (-map-discriminator x)
     :merge  (-alt-discriminator x)
-    (:string :time/offset-date-time :time/local-date :time/local-date-time :enum :re :decimal) nil #_(do #{allways-true-discriminator})
+    (:string :time/offset-date-time :time/local-date :time/local-date-time :enum :re :decimal :double) nil #_(do #{allways-true-discriminator})
     ;:any (string-parser x)
     :tuple (-tuple-discriminator x)
     :alt  (-alt-discriminator x)
@@ -583,6 +626,7 @@
       (reduce
         (fn [acc [discriminator [inline-data? parser]]]
           ;(log/info :cat :pre (debug-element r))
+          (skip-closing-and-charactors r)
           (let [tagk (get-tag-kw r)]
             (log/info :cat tagk discriminator inline-data? (discriminator tagk) (debug-element r))
             (if (discriminator tagk)
@@ -616,9 +660,13 @@
                         ; :sub sub :derefed (-> sub m/deref-all)
                         ;:subparser subparser
                         )
+            is-empty? (.isEndElement r)
+            _ (prn (debug-element r))
+            _ (prn :is-empty? is-empty?)
             toreturn [tagk (subparser r)]]
+        (prn (debug-element r))
         ;  (log/info :type :tuple :toreturn toreturn :debug   (debug-element r))
-        ((safe-exit-tag tagk) r)
+        ((exit-tag tagk) r)
         (log/info :tuple toreturn :before-return (debug-element r))
         ;(skip-closing-and-charactors r)
         ;(assert (= schema-tag (get-tag-kw r)) (pr-str (debug-element r)))
@@ -639,6 +687,7 @@
                      (:alt :cat :or) (wrap-next-before-tag (-xml-parser child))
                      (-xml-parser child))]
     (fn [^XMLStreamReader r]
+      (assert-not-close! r)
       (loop [tag (.getEventType r) acc (transient [])]
         ;(assert (= tag 1) (debug-element r))
         (if (= tag 1)
@@ -695,6 +744,7 @@
   (let [child (nth (m/children x) 0)
         refparsers *ref-parsers*]
     (fn [^XMLStreamReader r]
+      ;(assert-not-close! r)
       (log/info :type :refparser :child child :debug  (debug-element r))
       ((get @refparsers child) r))))
 
@@ -775,7 +825,9 @@
                           ;(prn x)
                           (-sequential-parser keyvalue x))
                     :and (let [s (simplify tuplechild)]
-                           (-sequential-parser keyvalue (mu/assoc x 0 s)))))
+                           (-sequential-parser keyvalue (mu/assoc x 0 s)))
+                    :malli.core/schema
+                    (-sequential-parser keyvalue (m/deref x))))
     :boolean (boolean-parser x)
     :? (-regex-parser x)
     :* (-regex-parser x)
