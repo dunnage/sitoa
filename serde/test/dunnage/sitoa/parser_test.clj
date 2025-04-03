@@ -33,13 +33,13 @@
     (let [r ^XMLStreamReader (make-stream-reader {} s)]
       (p r)))
 
-  (def parsed (with-open [s (source (io/resource "NCPDP_20170715/Message-1621652001272.xml"))]
+  (def parsed (with-open [s (io/reader (io/resource "NCPDP_20170715/Message-1621652001272.xml"))]
                 (let [r ^XMLStreamReader (make-stream-reader {} s)]
                   (p r))))
-  (def parsed (with-open [s (source (io/resource "NCPDP_20170715/Message-sig1.xml"))]
+  (def parsed (with-open [s (io/reader (io/resource "NCPDP_20170715/Message-sig1.xml"))]
                 (let [r ^XMLStreamReader (make-stream-reader {} s)]
                   (p r))))
-  (def parsed (with-open [s (source (io/resource "NCPDP_20170715/renewalrequest.xml"))]
+  (def parsed (with-open [s (io/reader (io/resource "NCPDP_20170715/renewalrequest.xml"))]
                 (let [r ^XMLStreamReader (make-stream-reader {} s)]
                   (p r))))
 
@@ -52,17 +52,17 @@
                                       {:registry xml-primitives/external-registry})]
                     (xml-parser
                       (m/-set-children xsd (-> xsd m/children first m/children first vector)))))
-  (def parsed (with-open [s (source (io/resource "XMLSchema.xsd"))]
+  (def parsed (with-open [s (io/reader (io/resource "XMLSchema.xsd"))]
                 (let [r ^XMLStreamReader (make-stream-reader {} s)]
                   (xsd-parser r))))
 
-  (def fopparsed (with-open [s (source (io/resource "fopsample1.xml"))]
+  (def fopparsed (with-open [s (io/reader (io/resource "fopsample1.xml"))]
                    (let [r ^XMLStreamReader (make-stream-reader {} s)]
                      (fop-parser r))))
-  (def fopparsed (with-open [s (source (io/resource "table-borders.fo"))]
+  (def fopparsed (with-open [s (io/reader (io/resource "table-borders.fo"))]
                    (let [r ^XMLStreamReader (make-stream-reader {} s)]
                      (fop-parser r))))
-  (def fopparsed (with-open [s (source (io/resource "table-borders-max-ram.fo"))]
+  (def fopparsed (with-open [s (io/reader (io/resource "table-borders-max-ram.fo"))]
                    (let [r ^XMLStreamReader (make-stream-reader {} s)]
                      (fop-parser r))))
   (select-keys (m/explain message-schema parsed) [:value :errors])
