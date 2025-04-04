@@ -177,7 +177,7 @@
                  val])
          :merge (if (= (count acc) 2)
                   val
-                  (into acc
+                  (into [:merge {} acc]
                         (drop 2)
                         val))
          (conj acc val))
@@ -329,7 +329,7 @@
 
 (defn all-maps? [x]
   (transduce
-    (drop 1)
+    (drop 2)
     (fn ([acc] (if (nil? acc)
                  false
                  acc))
