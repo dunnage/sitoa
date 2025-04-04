@@ -387,13 +387,15 @@
                          ;(log/info (m/form (m/deref subschema)))
                          (let [dsubschema (-> subschema m/deref-all)]
                            (conj acc [tag
-                                      (case (m/form (m/deref subschema))
-                                        :org.w3.www.2001.XMLSchema/dateTime
-                                        (-xml-parser subschema)
-                                         (case (-> dsubschema m/type)
-                                                :sequential (-sequential-parser tag dsubschema)
-                                                (:alt :cat :or) (wrap-next-before-tag (-xml-parser dsubschema))
-                                                (-xml-parser dsubschema)))
+                                      (case (m/type subschema)
+                                        :ref (-xml-parser subschema)
+                                        (case (m/form (m/deref subschema))
+                                          :org.w3.www.2001.XMLSchema/dateTime
+                                          (-xml-parser subschema)
+                                          (case (-> dsubschema m/type)
+                                            :sequential (-sequential-parser tag dsubschema)
+                                            (:alt :cat :or) (wrap-next-before-tag (-xml-parser dsubschema))
+                                            (-xml-parser dsubschema))))
                                       (case (-> dsubschema m/type)
                                         (:alt :cat :or :sequential) (make-tag-discriminator dsubschema)
                                         nil)]))
