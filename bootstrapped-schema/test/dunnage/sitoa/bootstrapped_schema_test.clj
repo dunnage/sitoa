@@ -24,6 +24,6 @@
   (->> (mg/generate message-schema) #_(m/explain message-schema))
 
   (serialize-registry (xsd->schema {:default-ns "script"} (io/resource "NCPDP_20170715/transport.xsd")) "script_registry.edn")
-  (serialize-schema (raw-xsd->schema {:default-ns "spl"} (io/resource "spl/spl.xsd")) "spl.edn")
+  (serialize-schema (xsd->schema {:default-ns "spl"} (io/resource "spl/spl.xsd")) "spl.edn")
 
   )
