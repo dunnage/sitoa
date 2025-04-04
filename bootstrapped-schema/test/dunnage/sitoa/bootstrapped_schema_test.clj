@@ -1,6 +1,6 @@
 (ns dunnage.sitoa.bootstrapped-schema-test
   (:require [clojure.test :refer :all]
-            [dunnage.sitoa.bootstrapped-schema :refer [xsd->schema xsd->registry serialize-schema]]
+            [dunnage.sitoa.bootstrapped-schema :refer [xsd->schema xsd->registry serialize-schema serialize-registry]]
             [malli.core :as m]
             [malli.util :as mu]
             [dunnage.sitoa.xml-primitives :as xml-primitives]
@@ -22,6 +22,7 @@
                                 ))
   (->> (mg/generate message-schema) #_(m/explain message-schema))
 
+  (serialize-registry (xsd->schema {:default-ns "script"} (io/resource "NCPDP_20170715/transport.xsd")) "script_registry.edn")
   (serialize-schema (xsd->schema {:default-ns "spl"} (io/resource "spl/spl.xsd")) "spl.edn")
 
   )
