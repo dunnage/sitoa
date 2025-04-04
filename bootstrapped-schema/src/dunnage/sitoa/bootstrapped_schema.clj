@@ -176,11 +176,10 @@
                  (update acc 1 dissoc :x)
                  val])
          :merge (if (= (count acc) 2)
-                  (into [:merge {}
-                         acc]
+                  val
+                  (into acc
                         (drop 2)
-                        val)
-                  val)
+                        val))
          (conj acc val))
        :merge
        (case (first val)
@@ -365,8 +364,8 @@
                      (map identity)
                      (fn
                        ([acc] (if (all-maps? acc )
-                                (if (= (count acc)  2)
-                                  (nth acc 1)
+                                (if (= (count acc)  3)
+                                  (nth acc 2)
                                   (assoc acc 0 :merge))
                                 acc))
                        ([acc nv]
@@ -375,7 +374,7 @@
                                                       :compositor "sequence") nv)]
                           (conj acc n)
                           acc)))
-                     [:cat]
+                     [:cat {}]
                      fields))
       "choice" (cond
                  (and (= 1 (count fields))
