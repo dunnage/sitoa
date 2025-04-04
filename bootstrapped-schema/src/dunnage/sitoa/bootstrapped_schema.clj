@@ -157,42 +157,6 @@
            ty-ref)])
       )))
 
-(defn handle-fields-wrapper2 [{default-ns :default-ns :as context}]
-  (fn handle-fields-wrapper2-  [^XSParticle in]
-    (let [term (.getTerm in)
-          min-occurs (long (.getMinOccurs in))
-          max-occurs (long (.getMaxOccurs in))
-          value-sequence? (or (> max-occurs 1) (= max-occurs -1))]
-      (when (not= max-occurs 0) #_(not= (m/children ty-ref) [(keyword default-ns "Extension")])
-        (or (when-some [x (.asElementDecl term)]
-              (let [ty (.getType x)
-                    ty-ref (if (anon-type? ty)
-                             (-mtype ty context)
-                             (-seq-ref ty context))]
-
-                [[(->kw x)
-                  (cond-> {}
-                          (= 0 min-occurs)
-                          (assoc :optional true))
-                  (if value-sequence?
-                    [:sequential (if (= 0 min-occurs)
-                                   {:min 1}
-                                   {:min min-occurs})
-                     ty-ref]
-                    ty-ref)]])
-              )
-            (when-some [x (.asModelGroup term)]
-              (assert (= "sequence" (str (.getCompositor x))))
-              (assert (not value-sequence?))
-              (mapcat handle-fields-wrapper2- (.getChildren x))
-              )
-            (when-some [mgd (.asModelGroupDecl term)]
-              (when-some [x (.getModelGroup mgd)]
-                (assert (= "sequence" (str (.getCompositor x))))
-                (assert (not value-sequence?))
-                (mapcat handle-fields-wrapper2- (.getChildren x)))
-              ))))))
-
 (defn wrap-regex [context ^XSParticle in msch]
   (let [min-occurs (.getMinOccurs in)
         max-occurs (.getMaxOccurs in)
@@ -229,33 +193,6 @@
 
 (defn element-decl? [^XSParticle x]
   (some-> x .getTerm .asElementDecl))
-
-(declare every-sequence?)
-(defn particle-sequence? [map-keys ^XSParticle x]
-  (let [term (.getTerm x)]
-    (or (when-some [eldec (.asElementDecl term)]
-          (let [kw (->kw eldec)]
-            (if (contains? @map-keys kw)
-              false
-              (do (swap! map-keys conj kw)
-                  true))))
-        (when-some [mg (.asModelGroup term)]
-          (let [max-occurs (long (.getMaxOccurs x))
-                value-sequence? (or (> max-occurs 1) (= max-occurs -1))]
-            (if value-sequence?
-              false
-              (when (= "sequence" (str (.getCompositor mg)))
-                (every-sequence? map-keys mg)))))
-        (when-some [mgd (.asModelGroupDecl term)]
-          (let [max-occurs (long (.getMaxOccurs x))
-                value-sequence? (or (> max-occurs 1) (= max-occurs -1))]
-            (if value-sequence?
-              false
-              (when-some [mg (.getModelGroup mgd)]
-                (when (= "sequence" (str (.getCompositor mg)))
-                  (every-sequence? map-keys mg)))))))))
-(defn every-sequence? [map-keys ^XSModelGroup x]
-  (every? (partial particle-sequence? map-keys) (.getChildren x)))
 
 (declare handle-model-group handle-model-group-decl
          handle-wildcard handle-model-group-seq handle-model-group-decl-seq)
@@ -307,10 +244,10 @@
                         (when-some [wc (some-> fields first .getTerm .asWildcard)]
                           (instance? XSWildcard$Any wc)))
                    :any
-                   (every-sequence? (atom #{}) x)
+                   (every? element-decl? fields)
                    (if (:sequence context)
-                     (into [:map {:xml/in-seq-ex true :closed true}] (mapcat (handle-fields-wrapper2 (dissoc context :sequence))) fields)
-                     (into [:map {:closed true}] (mapcat (handle-fields-wrapper2 context)) fields))
+                     (into [:map {:xml/in-seq-ex true}] (keep (handle-fields-wrapper (dissoc context :sequence))) fields)
+                     (into [:map {:test :test}] (keep (handle-fields-wrapper context)) fields))
                    :default
                    (transduce
                      (map identity)
@@ -357,8 +294,8 @@
               (and (= 1 (count fields))
                    (instance? XSWildcard$Any (first fields)))
               :any
-              (every-sequence? (atom #{}) x)
-              (into [:map {:closed true}] (mapcat (handle-fields-wrapper2 context)) fields)
+              (every? element-decl? fields)
+              (into [:map {:test :test}] (keep (handle-fields-wrapper context)) fields)
               :default [compositor (map #(group-particle context %) fields)]))))
 
 (defn handle-model-group-decl [{default-ns :default-ns :as context} ^XSModelGroupDecl x]
