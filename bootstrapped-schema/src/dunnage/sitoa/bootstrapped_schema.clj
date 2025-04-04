@@ -465,14 +465,21 @@
         (and attr-map simple) (-> attr-map
                                   (update 1 assoc :xml/value-wrapped true)
                                   (conj [:xml/value {} simple]))
-        (and attr-map complex (#{:map :merge} (complex-tag complex)))
-        [:merge {}
-         attr-map
-         complex
-         ]
-        (and attr-map complex) (-> attr-map
-                                   (update 1 assoc :xml/value-wrapped true)
-                                   (conj [:xml/value {} complex]))
+        (and attr-map complex)
+        (case (complex-tag complex)
+          :map
+          [:merge {}
+           attr-map
+           complex
+           ]
+          :merge
+          (into [:merge {}
+                 attr-map]
+                (drop 2)
+                complex)
+          (-> attr-map
+              (update 1 assoc :xml/value-wrapped true)
+              (conj [:xml/value {} complex])))
         (and attr-map (nil? complex)) attr-map
         simple simple
         complex complex)))
