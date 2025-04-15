@@ -192,7 +192,7 @@
              (update acc last-index conj val)
              (conj acc [:map (assoc props :x :x) val]))))))))
 
-(defn handle-fields-wrapper2 [{default-ns :default-ns :as context}]
+(defn handle-fields-wrapper2 [{optional-group :optional-group default-ns :default-ns :as context}]
   (fn handle-fields-wrapper2-  [^XSParticle in]
     (let [term (.getTerm in)
           min-occurs (long (.getMinOccurs in))
@@ -208,7 +208,10 @@
                       [(->kw x)
                        (cond-> {}
                                (= 0 min-occurs)
-                               (assoc :optional true))
+                               (assoc :optional true)
+                               optional-group
+                               (assoc :optional true
+                                      :required-in-group true))
                        (if value-sequence?
                          [:sequential (if (= 0 min-occurs)
                                         {:min 1}
@@ -220,18 +223,21 @@
                     (assert (= "sequence" (str (.getCompositor x))))
                     (assert (not value-sequence?))
                     (transduce
-                      (keep (handle-fields-wrapper2 context))
-                      (simplify-fields {:closed true})
+                      (keep (handle-fields-wrapper2 (assoc context :optional-group (= 0 min-occurs))))
+                      (simplify-fields (cond-> {:closed true}
+                                               (= 0 min-occurs)
+                                               (assoc :optional-group true)))
                       (.getChildren x)))
                   (when-some [mgd (.asModelGroupDecl term)]
                     (when-some [x (.getModelGroup mgd)]
                       (assert (= "sequence" (str (.getCompositor x))))
                       (assert (not value-sequence?))
                       (transduce
-                        (keep (handle-fields-wrapper2 context))
-                        (simplify-fields {:closed true})
-                        (.getChildren x)))
-                    )
+                        (keep (handle-fields-wrapper2 (assoc context :optional-group (= 0 min-occurs))))
+                        (simplify-fields (cond-> {:closed true}
+                                                 (= 0 min-occurs)
+                                                 (assoc :optional-group true)))
+                        (.getChildren x))))
 
                   (prn :fail (bean in))))))))
 
@@ -451,6 +457,7 @@
   XSComplexType
   (-mtype [x context]
     (let [ct (.getContentType x)
+          mixed? (.isMixed x)
           attr-map (complex-attrs-map x context)
           simple (some-> ct
                          .asSimpleType
@@ -461,7 +468,6 @@
                            .asParticle
                            (handle-toplevel-particle context))]
       (cond
-        empt :any
         (and attr-map simple) (-> attr-map
                                   (update 1 assoc :xml/value-wrapped true)
                                   (conj [:xml/value {} simple]))
@@ -470,8 +476,7 @@
           :map
           [:merge {}
            attr-map
-           complex
-           ]
+           complex]
           :merge
           (into [:merge {}
                  attr-map]
@@ -482,7 +487,11 @@
               (conj [:xml/value {} complex])))
         (and attr-map (nil? complex)) attr-map
         simple simple
-        complex complex)))
+        complex complex
+        empt (or attr-map [:map {:empty true}]) #_(do
+               (prn (bean ct))
+               (throw (ex-info "empty" {} #_{:x (bean ct)}))
+               :any))))
   (-seq-possible? [x context]
     true)
   (-seq-ref [x context]
@@ -549,22 +558,28 @@
             "date", prim-keyword                            ;javax.xml.datatype.XMLGregorianCalendar
             "dateTime", prim-keyword                        ;javax.xml.datatype.XMLGregorianCalendar
             "string", (malli-string-primitive x context)
-            ;"IDREFS" :string
-            ;"ENTITIES" :string
-            ;"NMTOKENS" :string
+
             #_#_nil (do                                         ;(prn (bean x))
                   (-mtype base-type context))))
         "list"
-        (let [ct (.getContentType x)]
-          (if (identical? ct x)
-            (do                                             ;(prn (.getName x) (.getDeclaredFacets x)) #_(pp/pprint (bean x))
-              :any)
-            [:sequence {:primitive true}
-             (if (anon-type? ct)
-               (-mtype ct (dissoc context :sequence))
-               (-seq-ref ct (dissoc context :sequence)))]))
+        (if-some [ltype (.asList x)]
+          (let [it (.getItemType ltype)]
+            (do                                             ; (identical? ct x)
+              #_(do (throw (ex-info "empty" {}))            ;(prn (.getName x) (.getDeclaredFacets x)) #_(pp/pprint (bean x))
+                    :any)
+              (prn it)
+              [:sequence {:primitive true}
+               (if (anon-type? it)
+                   (-mtype it (dissoc context :sequence))
+                   (-seq-ref it (dissoc context :sequence)))]))
+          (case (get-primitive-type x)
+            "IDREFS" :string
+            "ENTITIES" :string
+            "NMTOKENS" :string
+            ))
         "union"
         (let []
+          (throw (ex-info "union is not supported yet" {}))
           [:any {:name (.getName x)}]
           #_(if (identical? ct x)
             (do (prn (.getName x) (.getDeclaredFacets x)) #_(pp/pprint (bean x))
@@ -602,7 +617,7 @@
     (.getResult parser)))
 
 (defn xsd->top-type [{default-ns :default-ns :as context} schema]
-  (into [:or]
+  (into [:multi {:dispatch first}]
         (map (partial handle-element-decl context))
         (iterator-seq (.iterateElementDecls schema))))
 
