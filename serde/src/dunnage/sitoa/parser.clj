@@ -760,23 +760,31 @@
                       ;(:ref) (do (log/info :ref)
                       ;           true)
                       false)
-        sub-parser (-xml-parser child)]
+        sub-parser (-xml-parser child)
+        dereffed-child (m/deref-all child)]
     (fn [^XMLStreamReader r]
-      (loop [start-tag? (= (.getEventType r) 1) acc (transient [])]
-        (if start-tag?
-          (let [tagk (get-tag-kw r)]
-            (log/info :type :-regex-parser-outer :tagk tagk :sub-discriminator sub-discriminator :child child :debug (debug-element r))
-            (if (sub-discriminator tagk)
-              (let [v (sub-parser r)]
-                ;(ensure-safe-next-tag r)
-                (log/info :type :-regex-parser :tagk tagk :schema (m/deref-all child) :debug (debug-element r) :v v)
-                (recur (= (.getEventType r) 1) (if inline?
-                                                 (reduce conj! acc v)
-                                                 (conj! acc v))))
-              (do (.getEventType r)
-                  (not-empty (persistent! acc)))))
-          (do (.getEventType r)
-              (not-empty (persistent! acc))))))))
+      (loop [event-type (.getEventType r) acc (transient [])]
+        (case event-type
+          1 (let [tagk (get-tag-kw r)]
+              (log/info :type :-regex-parser-outer :tagk tagk :sub-discriminator sub-discriminator :child child :debug (debug-element r))
+              (if (sub-discriminator tagk)
+                (let [v (sub-parser r)]
+                  ;(ensure-safe-next-tag r)
+                  (log/info :type :-regex-parser :tagk tagk :schema dereffed-child :debug (debug-element r) :v v)
+                  (recur (.getEventType r)
+                         (if inline?
+                           (reduce conj! acc v)
+                           (conj! acc v))))
+                (do                                         ;(prn :exit-regex (debug-element r))
+                    (not-empty (persistent! acc)))))
+          (do
+            (skip-characters r)
+            (if (= (.getEventType r) 1)
+              (recur (.getEventType r)
+                     acc)
+              (do
+                ;(prn :exit-regex-non-element (debug-element r))
+                (not-empty (persistent! acc))))))))))
 
 (defn get-first-tag [parser]
   (fn [^XMLStreamReader r]
