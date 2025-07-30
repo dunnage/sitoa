@@ -15,6 +15,8 @@
 (set! *warn-on-reflection* true)
 (def full-string-transformer (transform/transformer transform/string-transformer mett/time-transformer))
 
+(def ^:dynamic *discriminator-refs* nil)
+(def ^:dynamic *unparser-refs* nil)
 
 (defn make-stream-writer [props source]
   (let [fac (XMLOutputFactory/newInstance)]
@@ -98,6 +100,29 @@
       (instance? OffsetDateTime data))))
 
 (defn -alt-discriminator [x in-regex?]
+  (let [children (m/children x)
+        sub-discriminators (into []
+                                 (map (juxt #(-xml-discriminator % true) seqex? seqex-optional? identity))
+                                 children)
+        f
+        (fn [data pos]
+          (or (xforms/some
+                (keep (fn [[discriminator seqex? optional? sch]]
+                        (let [disc (discriminator data pos)]
+                          (log/info :type :-alt-discriminator
+                                    :tag [disc pos]
+                                    :sch sch
+                                    ; :data data
+                                    )
+                          (if (> disc pos)
+                            disc))))
+                sub-discriminators)
+              pos))]
+    (if in-regex?
+      f
+      (fn [data] (pos? (f data 0))))))
+
+(defn -or-discriminator [x in-regex?]
   (let [children (m/children x)
         sub-discriminators (into []
                                  (map (juxt #(-xml-discriminator % true) seqex? seqex-optional? identity))
@@ -256,12 +281,30 @@
               false
               required-attrs))))))
 
+(defn ensure-discriminator-ref [x in-regex?]
+  (assert *discriminator-refs*)
+  (let [children (m/children x)
+        _ (assert (= 1 (count children)))
+        key (first children)
+        ]
+    (if-some [existing (get @*discriminator-refs* key)]
+      existing
+      (let [d (delay (-xml-discriminator (m/deref x) in-regex?))]
+        (swap! *discriminator-refs* assoc key d)
+        d))))
+
+(defn -ref-discriminator [x in-regex?]
+  (let [sub-discriminator (ensure-discriminator-ref x in-regex?)]
+    (fn [data]
+      (@sub-discriminator data))))
+
 (defn -xml-discriminator [x in-regex?]
+  (prn (m/form x))
   (case (m/type x)
     :schema (-xml-discriminator (m/deref x) in-regex?)
     :malli.core/schema
     (-xml-discriminator (m/deref x) in-regex?)
-    :ref (-xml-discriminator (m/deref x) in-regex?)
+    :ref (-ref-discriminator x in-regex?)
     ;:merge (-xml-discriminator (m/deref x))
     :map (-map-discriminator x in-regex?)
     ;:string (string-discriminator x)
@@ -275,7 +318,7 @@
     ;:any (string-discriminator x)
     :tuple (-tuple-discriminator x in-regex?)
     :alt  (-alt-discriminator x in-regex?)
-    ;:or  (-or-discriminator x)
+    :or  (-or-discriminator x in-regex?)
     ;:and (-and-discriminator x)
     :cat (-cat-discriminator x in-regex?)
     :sequential (-sequential-discriminator x in-regex?)
@@ -337,7 +380,7 @@
         tags (m/children enum)
         _ (assert (= 1 (count tags)))
         tag (name (first tags))
-        child-writer (-xml-unparser (m/deref child) false)
+        child-writer (-xml-unparser child false)
         ]
     #_(log/info tag child)
     (assert child-writer)
@@ -590,6 +633,23 @@
           ;no partial consumption on outside of regex
           consumed)))))
 
+(defn ensure-unparser-ref [x in-regex?]
+  (assert *unparser-refs*)
+  (let [children (m/children x)
+        _ (assert (= 1 (count children)))
+        key (first children)
+        ]
+    (if-some [existing (get @*unparser-refs* key)]
+      existing
+      (let [d (delay (-xml-unparser (m/deref x) in-regex?))]
+        (swap! *unparser-refs* assoc key d)
+        d))))
+
+(defn -ref-unparser [x in-regex?]
+  (let [sub-unparser (ensure-unparser-ref x in-regex?)]
+    (fn [data]
+      (@sub-unparser data))))
+
 (defn -xml-unparser [x in-regex?]
   (case (m/type x)
     :schema (let [{:keys [topElement]} (m/properties x)
@@ -611,7 +671,7 @@
                     result))))
     :malli.core/schema
     (-xml-unparser (m/deref x) in-regex?)
-    :ref (-xml-unparser (m/deref x) in-regex?)
+    :ref (-ref-unparser x in-regex?)
     :merge (-xml-unparser (m/deref x) in-regex?)
     :map (-map-unparser x in-regex?)
     :string (string-unparser x in-regex?)
@@ -619,9 +679,11 @@
     :time/local-date-time (string-encode-unparser x in-regex?)
     :time/offset-date-time (offset-datetime-unparser x in-regex?)
     :time/local-date (string-encode-unparser x in-regex?)
+    :time/local-time (string-encode-unparser x in-regex?)
     :zoned-date (string-encode-unparser x in-regex?)
     :enum (string-unparser x in-regex?)
     :decimal (string-encode-unparser x in-regex?)
+    :int (string-encode-unparser x in-regex?)
     :any (string-unparser  x in-regex?)
     :tuple (-tuple-unparser x in-regex?)
     :alt (-alt-unparser x in-regex?)
@@ -636,6 +698,33 @@
     :repeat (-regex-unparser x in-regex?)
     ;:nil (fn [r]nil )
     ))
+
+(defn resolve-val-delays [x]
+  (reduce-kv
+    (fn [acc k v]
+      (when-not (realized? v)
+        (deref v))
+      nil)
+    nil
+    x))
+(defn fixed-point [x f]
+  (loop [last-x @x]
+    (do (f last-x)
+        (let [new-x @x]
+          (if (= last-x new-x)
+            x
+            (recur new-x))))))
+
+(defn -xml-unparser- [x in-regex?]
+  (let [discriminator-refs (atom {})
+        unparser-refs (atom {})]
+    (binding [*discriminator-refs* discriminator-refs
+              *unparser-refs* unparser-refs]
+      (let [up (-xml-unparser x in-regex?)]
+        (fixed-point unparser-refs resolve-val-delays)
+        (fixed-point discriminator-refs resolve-val-delays)
+        up))))
+
 (defn document-writer [f]
   (fn [data ^XMLStreamWriter w]
     (.writeStartDocument w "UTF-8" "1.0")
@@ -662,7 +751,7 @@
   ([?schema]
    (xml-unparser ?schema nil))
   ([?schema options]
-   (document-writer (-xml-unparser (m/schema ?schema options) false))
+   (document-writer (-xml-unparser- (m/schema ?schema options) false))
 
    #_(m/-cached (m/schema ?schema options) :xml-unparser -xml-unparser)))
 
@@ -672,7 +761,7 @@
   ([?schema]
    (xml-string-unparser ?schema nil))
   ([?schema options]
-   (string-writer (-xml-unparser (m/schema ?schema options) false) options)
+   (string-writer (-xml-unparser- (m/schema ?schema options) false) options)
 
    #_(m/-cached (m/schema ?schema options) :xml-unparser -xml-unparser)))
 
