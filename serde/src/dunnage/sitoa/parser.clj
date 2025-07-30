@@ -873,6 +873,7 @@
     ;:re (string-parser x)
     :enum (string-parser x)
     :decimal (decimal-parser x)
+    :int (decimal-parser x)
     :double (decimal-parser x)
     :any (string-parser x)
     :tuple (-tuple-parser x)

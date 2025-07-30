@@ -109,6 +109,10 @@
         (keyword default-ns name)
         (keyword name)))))
 
+(defn wrap-ref-np [x]
+  (if (= (namespace x) "org.w3.www.2001.XMLSchema")
+    x
+    [:ref x]))
 (defn ->nskw-seq [^XSDeclaration x default-ns]
   (when-some [name (some-> (.getName x) (str "-seq"))]
     (if-some [n (some-> (.getTargetNamespace x)
@@ -499,8 +503,8 @@
                       .getContentType
                       .asParticle)
              (:sequence context))
-      [:ref (->nskw-seq x (:default-ns context))]
-      [:ref (->nskw x (:default-ns context))])
+      (wrap-ref-np (->nskw-seq x (:default-ns context)))
+      (wrap-ref-np (->nskw x (:default-ns context))))
     ))
 
 (defn union-reducible [^XSUnionSimpleType in]
@@ -531,8 +535,8 @@
     true)
   (-seq-ref [x context]
     (if (:sequence context)
-      [:ref (->nskw-seq x (:default-ns context))]
-      [:ref (->nskw x (:default-ns context))])
+      (wrap-ref-np (->nskw-seq x (:default-ns context)))
+      (wrap-ref-np (->nskw x (:default-ns context))))
     ))
 
 (extend-protocol MalliXML
@@ -629,12 +633,14 @@
             (remove (fn [^XSType x]
                       (some-> x .asSimpleType .isPrimitive)))
             (filter #(-seq-possible? % nil))
+            (remove #(-> (->nskw-seq % default-ns) namespace (= "org.w3.www.2001.XMLSchema")))
             (map #(vector (->nskw-seq % default-ns) (-mtype % seq-context))))
           (iterator-seq (.iterateTypes schema)))
         (into
           (comp
             (remove (fn [^XSType x]
                       (some-> x .asSimpleType .isPrimitive)))
+            (remove #(-> (->nskw % default-ns) namespace (= "org.w3.www.2001.XMLSchema")))
             (map #(vector (->nskw % default-ns) (-mtype % context))))
           (iterator-seq (.iterateTypes schema)))
 
@@ -642,12 +648,14 @@
           (comp
             (filter (fn [^XSModelGroupDecl x]
                       (.isGlobal x)))
+            (remove #(-> (->nskw-seq % default-ns) namespace (= "org.w3.www.2001.XMLSchema")))
             (map #(vector (->nskw-seq % default-ns) (-mtype % seq-context))))
           (iterator-seq (.iterateModelGroupDecls schema)))
         (into
           (comp
             (filter (fn [^XSModelGroupDecl x]
                       (.isGlobal x)))
+            (remove #(-> (->nskw % default-ns) namespace (= "org.w3.www.2001.XMLSchema")))
             (map #(vector (->nskw % default-ns) (-mtype % context))))
           (iterator-seq (.iterateModelGroupDecls schema))))))
 
