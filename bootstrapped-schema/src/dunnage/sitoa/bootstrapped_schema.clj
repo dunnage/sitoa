@@ -664,6 +664,29 @@
     [:schema {:registry registry}
      top-type]))
 
+(defn trim-registry-for-top-types- [full-registry trimmed-registry next-keys]
+  (if-some [new-keys (->> next-keys
+                       (into []
+                             (comp (remove trimmed-registry)))
+                          not-empty)]
+    (let [new-registry (select-keys full-registry new-keys)
+          new-refs (atom #{})]
+      (reduce-kv
+        (fn [_ k v]
+          (m/walk v
+                  (m/schema-walker
+                    (fn [sch]
+                      (when (= :ref (m/type sch))
+                        (swap! new-refs conj (-> sch m/children first)))
+                      sch))))
+        nil
+        new-registry)
+      (recur full-registry (into trimmed-registry new-registry) @new-refs))
+    trimmed-registry))
+
+(defn trim-registry-for-top-types [registry top-types]
+  (trim-registry-for-top-types- registry {} top-types))
+
 (defn into-sorted-map [x]
   (into (sorted-map) x))
 
