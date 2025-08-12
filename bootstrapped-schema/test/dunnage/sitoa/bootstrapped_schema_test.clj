@@ -23,7 +23,10 @@
                                 ))
   (->> (mg/generate message-schema) #_(m/explain message-schema))
 
-  (serialize-registry (xsd->schema {:default-ns "script"} (io/resource "NCPDP_20170715/transport.xsd")) "script_registry.edn")
+  (serialize-registry
+    (-> (xsd->schema {:default-ns "script"} (io/resource "NCPDP_20170715/transport.xsd"))
+        (mu/update-properties update :registry trim-registry-for-top-types [:script/MessageType]))
+    "script_registry.edn")
   (serialize-registry
     (-> (xsd->schema {:default-ns "directory"} (io/resource "Directory/62/directory6.2.xsd"))
         (mu/update-properties update :registry trim-registry-for-top-types [:directory/DirectoryMessageType]))
