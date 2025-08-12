@@ -676,8 +676,11 @@
           (m/walk v
                   (m/schema-walker
                     (fn [sch]
-                      (when (= :ref (m/type sch))
-                        (swap! new-refs conj (-> sch m/children first)))
+                      (case (m/type sch)
+                        :ref (swap! new-refs conj (-> sch m/children first))
+                        :malli.core/schema (when (m/-reference? (m/form sch))
+                                             (swap! new-refs conj (m/form sch)))
+                        nil)
                       sch))))
         nil
         new-registry)

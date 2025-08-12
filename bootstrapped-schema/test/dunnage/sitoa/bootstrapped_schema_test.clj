@@ -25,8 +25,8 @@
 
   (serialize-registry (xsd->schema {:default-ns "script"} (io/resource "NCPDP_20170715/transport.xsd")) "script_registry.edn")
   (serialize-registry
-    (-> (xsd->schema {:default-ns "script"} (io/resource "Directory/62/directory6.2.xsd"))
-        (mu/update-properties update :registry trim-registry-for-top-types [:script/DirectoryMessageType]))
+    (-> (xsd->schema {:default-ns "directory"} (io/resource "Directory/62/directory6.2.xsd"))
+        (mu/update-properties update :registry trim-registry-for-top-types [:directory/DirectoryMessageType]))
     "directory_registry.edn")
   (serialize-schema (xsd->schema {:default-ns "spl"} (io/resource "spl/spl.xsd")) "spl.edn")
 
