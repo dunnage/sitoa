@@ -618,7 +618,9 @@
 
 (defn xsd->top-type [{default-ns :default-ns :as context} schema]
   (into [:multi {:dispatch first}]
-        (map (partial handle-element-decl context))
+        (comp (map (partial handle-element-decl context))
+              (map (fn [[_ _ [_ tag] :as x]]
+                     [tag x])))
         (iterator-seq (.iterateElementDecls schema))))
 
 (defn xsd->registry [{default-ns :default-ns :as context} schema]
