@@ -664,6 +664,9 @@
     [:schema {:registry registry}
      top-type]))
 
+(defn into-sorted-map [x]
+  (into (sorted-map) x))
+
 (defn serialize-registry [schema filename]
   (with-open [w (io/writer filename)]
     (binding [*out* w]
@@ -676,11 +679,11 @@
           ;(.write w "\n")
           )
         w
-        (-> schema m/properties :registry))
+        (-> schema m/properties :registry into-sorted-map))
       (.write w "}")
       )))
 
 (defn serialize-schema [schema filename]
   (with-open [w (io/writer filename)]
-    (fipp (m/form schema) {:writer w})))
+    (fipp (m/form (mu/update-properties schema :registry into-sorted-map)) {:writer w})))
 
