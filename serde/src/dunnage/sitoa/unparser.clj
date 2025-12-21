@@ -679,8 +679,11 @@
 
 (defn -ref-unparser [x in-regex?]
   (let [sub-unparser (ensure-unparser-ref x in-regex?)]
-    (fn [data]
-      (@sub-unparser data))))
+    (fn
+      ([data]
+       (@sub-unparser data))
+      ([data offset]
+       (@sub-unparser data offset)))))
 
 (defn -xml-unparser [x in-regex?]
   (case (m/type x)
