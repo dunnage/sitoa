@@ -145,6 +145,18 @@
       f
       (fn [data] (pos? (f data 0))))))
 
+(defn -multi-discriminator [x in-regex?]
+  (let [children (m/children x)
+        dispatch (-> x m/properties :dispatch)
+        tags (into #{}
+                                 (map first)
+                                 children)
+        f
+        (fn [data] (and (vector? data) (tags (dispatch data))))]
+    (if in-regex?
+      f
+      (fn [data] (pos? (f data 0))))))
+
 (defn -tuple-discriminator [x in-regex?]
   (let [[enum] (m/children x)
         _ (assert (= (m/type enum) :enum))
@@ -319,6 +331,7 @@
     :tuple (-tuple-discriminator x in-regex?)
     :alt  (-alt-discriminator x in-regex?)
     :or  (-or-discriminator x in-regex?)
+    :multi  (-multi-discriminator x in-regex?)
     ;:and (-and-discriminator x)
     :cat (-cat-discriminator x in-regex?)
     :sequential (-sequential-discriminator x in-regex?)
@@ -374,6 +387,25 @@
                       (reduced  (unparser data w)))))
                 nil
                 subparsers)))))
+
+(defn -multi-unparser [x in-regex?]
+  (let [children (m/children x)
+        dispatch (-> x m/properties :dispatch)
+        subparsers (into {}
+                         (map (juxt first (comp #(-xml-unparser % false) #(nth % 2))))
+                         children)]
+    (if in-regex?
+      (fn [data pos ^XMLStreamWriter w]
+        (let [k (dispatch data)]
+          (when-some [sub-unparser (get subparsers k)]
+            (sub-unparser data nil w)
+            (reduced (inc pos))
+            )))
+      (fn [data ^XMLStreamWriter w]
+        (let [k (dispatch data)]
+          (when-some [sub-unparser (get subparsers k)]
+            (sub-unparser data w)
+            ))))))
 
 (defn -tuple-unparser [x in-regex?]
   (let [[enum child] (m/children x)
@@ -688,6 +720,7 @@
     :tuple (-tuple-unparser x in-regex?)
     :alt (-alt-unparser x in-regex?)
     :or (-or-unparser  x in-regex?)
+    :multi (-multi-unparser  x in-regex?)
     :and (-and-unparser x in-regex?)
     :cat (-cat-unparser x in-regex?)
     :sequential (-sequential-unparser x in-regex?)
