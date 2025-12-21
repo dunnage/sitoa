@@ -311,7 +311,7 @@
       (@sub-discriminator data))))
 
 (defn -xml-discriminator [x in-regex?]
-  (prn (m/form x))
+  ;(prn (m/form x))
   (case (m/type x)
     :schema (-xml-discriminator (m/deref x) in-regex?)
     :malli.core/schema
