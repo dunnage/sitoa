@@ -355,10 +355,16 @@
 (defn boolean-unparser [x in-regex?]
   (if in-regex?
     (fn [data pos ^XMLStreamWriter w]
-      (.writeCharacters w data)
+      (cond
+        (true? data) (.writeCharacters w "true")
+        (false? data) (.writeCharacters w "false")
+        :else (throw (ex-info "not a valid bool" {:data data})))
       (inc pos))
     (fn [data ^XMLStreamWriter w]
-      (.writeCharacters w data)
+      (cond
+        (true? data) (.writeCharacters w "true")
+        (false? data) (.writeCharacters w "false")
+        :else (throw (ex-info "not a valid bool" {:data data})))
       true)))
 
 
