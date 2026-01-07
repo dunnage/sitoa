@@ -716,7 +716,7 @@
         ;              (:alt :cat :or) true
         ;              false)
         subparser (case (-> sub m/deref-all m/type)
-                    (:alt :cat :or) (wrap-next-before-tag (-xml-parser sub))
+                    (:alt :cat :or :multi) (wrap-next-before-tag (-xml-parser sub))
                     (-xml-parser sub))]
     (fn [^XMLStreamReader r]
       (let [tagk (get-tag-kw r)
