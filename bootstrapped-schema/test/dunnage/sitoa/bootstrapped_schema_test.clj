@@ -14,7 +14,7 @@
   (with-open [writer (io/writer "resources/fop.edn")]
     (fipp.edn/pprint (m/form (xsd->schema {:default-ns "fop"} (io/resource "fop.xsd"))) {:writer writer}))
 
-  (def message-schema (m/schema (xsd->registry {:default-ns "script"} (io/resource "NCPDP_20170715/transport.xsd"))
+  (def message-schema (m/schema (xsd->registry {:default-ns "script"} (io/resource "NCPDP_2023011/transport.xsd"))
                                 {:registry (merge
                                              (m/default-schemas)
                                              (mu/schemas)
@@ -24,7 +24,7 @@
   (->> (mg/generate message-schema) #_(m/explain message-schema))
 
   (serialize-registry
-    (-> (xsd->schema {:default-ns "script"} (io/resource "NCPDP_20170715/transport.xsd"))
+    (-> (xsd->schema {:default-ns "script"} (io/resource "NCPDP_2023011/transport.xsd"))
         (mu/update-properties update :registry trim-registry-for-top-types [:script/MessageType]))
     "script_registry.edn")
   (serialize-registry
