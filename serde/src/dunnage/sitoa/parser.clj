@@ -415,7 +415,7 @@
                                  (-xml-parser dsubschema)
                                  (case (-> dsubschema m/type)
                                    (:sequential) (-sequential-parser tag subschema)
-                                   (:alt :cat :or) (->> (wrap-next-before-tag (-xml-parser subschema))
+                                   (:alt :cat :or :multi) (->> (wrap-next-before-tag (-xml-parser subschema))
                                                        (single-tag-parser tag ))
                                    (single-tag-parser tag (-xml-parser subschema))))]
                            (conj acc [tag
@@ -440,7 +440,7 @@
                                      (-xml-parser dsubschema)
                                      (case (-> dsubschema m/type)
                                        (:sequential) (-sequential-parser tag subschema)
-                                       (:alt :cat :or) (wrap-next-before-tag (-xml-parser subschema))
+                                       (:alt :cat :or :multi) (wrap-next-before-tag (-xml-parser subschema))
                                        (-xml-parser subschema)))]
                                (required-parser tag parser))
                              ))
@@ -520,6 +520,11 @@
         (comp (mapcat (fn [item]
                      (make-tag-discriminator item))))
         (-> x m/children)))
+(defn -multi-discriminator [x]
+  (into #{}
+        (map (fn [y]
+               (first y)))
+        (-> x m/children)))
 
 
 (defn special-tuple-tag [x]
@@ -551,6 +556,7 @@
     :alt  (-alt-discriminator x)
     :or (do                                                 ;(log/info x)
           (-alt-discriminator x))
+    :multi (-multi-discriminator x)
     :cat (-cat-discriminator x)
     :and (let [f (first (m/children x))]
            (make-tag-discriminator f))
@@ -618,6 +624,23 @@
               acc)))
         nil
         discriminator-parsers))))
+
+(defn -multi-parser [x]
+  (let [children (-> x m/children)
+        ;_ (log/info children)
+        parsers (into {} (map
+                           (fn [[k props v]]
+                             [k (-xml-parser v)]
+                             )) children)]
+    (fn [^XMLStreamReader r]
+      (let [tagk (get-tag-kw r)]
+        (when-some [parser (parsers tagk)]
+          (let [v (parser r)]
+            (log/info :type :multi :tagk tagk :v v :before-return (debug-element r))
+            ;(skip-closing-and-charactors r)
+            ;((exit-tag tagk) r)
+            v))))))
+
 
 (defn -maybe-parser [x]
   (let [children (-> x m/children)
@@ -693,7 +716,7 @@
         ;              (:alt :cat :or) true
         ;              false)
         subparser (case (-> sub m/deref-all m/type)
-                    (:alt :cat :or) (wrap-next-before-tag (-xml-parser sub))
+                    (:alt :cat :or :multi) (wrap-next-before-tag (-xml-parser sub))
                     (-xml-parser sub))]
     (fn [^XMLStreamReader r]
       (let [tagk (get-tag-kw r)
@@ -873,11 +896,13 @@
     ;:re (string-parser x)
     :enum (string-parser x)
     :decimal (decimal-parser x)
+    :int (decimal-parser x)
     :double (decimal-parser x)
     :any (string-parser x)
     :tuple (-tuple-parser x)
     :alt  (-alt-parser x)
     :or  (-or-parser x)
+    :multi (-multi-parser x)
     :and (-and-parser x)
     :cat (-cat-parser x)
     :sequential (let [tuplechild (-> x m/children first)
