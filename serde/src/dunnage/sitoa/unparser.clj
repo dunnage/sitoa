@@ -227,7 +227,7 @@
                               :exhausted true
                               :descrim pos
                               :item-data (nth data pos))
-                    (assert false (nth data pos))
+                    (assert in-regex? (nth data pos))
                     pos))
               pos)
             ))]
@@ -539,7 +539,7 @@
                         (recur pos (rest subparsers))
                         (do (assert (> pos ogpos) (pr-str data sch))
                             pos))))
-                  (do (assert false (pr-str [pos (drop pos data)]))
+                  (do (assert in-regex? (pr-str [pos (drop pos data)]))
                       pos))
                 pos)
               ))]
