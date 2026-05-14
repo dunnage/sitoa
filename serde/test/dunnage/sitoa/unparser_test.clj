@@ -134,6 +134,26 @@
       (is (not= input parsed))
       (is (= 42M parsed)))))
 
+;; ---------- :double has no entry in the unparser dispatch table ----------
+;;
+;; xmlschema-registry maps both :org.w3.www.2001.XMLSchema/float and
+;; :org.w3.www.2001.XMLSchema/double to malli's :double. The unparser
+;; dispatch (-xml-unparser, around line 716) handles :int, :decimal,
+;; :string, :boolean, etc., but has no clause for :double. The case form
+;; therefore raises IllegalArgumentException ("No matching clause: :double")
+;; the moment a :double-typed element is unparsed.
+;;
+;; PROPOSED FIX (unparser.clj dispatch table)
+;; Add :double (and :float, if applicable) to the case form, routed through
+;; string-encode-unparser like :int / :decimal:
+;;
+;;   :double (string-encode-unparser x in-regex?)
+
+(deftest double-element-body-unparser-missing
+  (testing "Building an unparser over a :double element crashes — :double is not in the dispatch table"
+    (is (thrown-with-msg? IllegalArgumentException #"No matching clause: :double"
+                          (mini-unparser :double)))))
+
 ;; ---------- OffsetDateTime round-trip loses the timezone offset ----------
 ;;
 ;; CONTEXT
