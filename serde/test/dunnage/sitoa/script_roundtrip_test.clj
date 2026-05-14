@@ -69,3 +69,32 @@
   (let [out (round-trip status-message)]
     (is (= (-> status-message :Body second :Description)
            (-> out             :Body second :Description)))))
+
+(defn- scoped [type-kw element-name]
+  (m/schema [:schema {:registry @script-registry :topElement element-name} type-kw]
+            xml-primitives/external-registry))
+
+(defn- round-trip-scoped [schema data]
+  (let [xml ((unparser/xml-string-unparser schema) data)
+        p   (parser/xml-parser schema)]
+    (with-open [r ^XMLStreamReader (parser/make-stream-reader {} (StringReader. xml))]
+      (p r))))
+
+(deftest attachment-roundtrips
+  ;; Attachment is xsd:cat containing a direct [:ref ClinicalInformation-seq].
+  ;; The unparser's -ref-discriminator returns an arity-1 fn but is called
+  ;; with (data pos) when inside a :cat -- "Wrong number of args (2)".
+  ;; Used in ClinicalInfoResponse, ClinicalInfoRequest, PARequest, etc.
+  (let [sample [[:AttachmentSource "EMR"]
+                [:AttachmentData   "SGVsbG8="]
+                [:CDA              {:TemplateID ["urn:hl7-org:ccda"]}]
+                [:MIMEType         "image/png"]]]
+    (is (= sample (round-trip-scoped (scoped :script/Attachment "Attachment") sample)))))
+
+(deftest binary-data-roundtrips
+  ;; BinaryDataType is <Binary LengthBytes="..." >base64...</Binary>.
+  ;; LengthBytes is xsd:int as an attribute -> the attribute unparser path
+  ;; casts the value to String and crashes for any non-String input.
+  ;; Used in CFMonograph, CFAttachment.
+  (let [sample {:LengthBytes 5 :xml/value "SGVsbG8="}]
+    (is (= sample (round-trip-scoped (scoped :script/BinaryDataType "Binary") sample)))))
