@@ -1,5 +1,6 @@
 (ns dunnage.sitoa.parser
   (:require [clojure.java.io :as io]
+            [clojure.set]
             [malli.core :as m]
             [clojure.xml :as xml]
             [io.pedestal.log :as log]
