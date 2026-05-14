@@ -14,5 +14,5 @@
           :ns-default build}
   :dev   {:extra-paths ["dev-resources"]
           :extra-deps  {ch.qos.logback/logback-classic {:mvn/version "1.4.3"}}}
-  :test  {:extra-paths ["test"]
+  :test  {:extra-paths ["test" "../bootstrapped-schema/dev-resources"]
           :extra-deps  {org.clojure/test.check {:mvn/version "1.1.1"}}}}}
