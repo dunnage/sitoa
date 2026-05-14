@@ -278,6 +278,54 @@
       (is (= "a\nb" parsed))
       (is (not= "a\rb" parsed)))))
 
+;; ---------- :xml/attr-positioned non-String values crash on .writeAttribute ----------
+;;
+;; The -map-unparser attribute path (around line 492) is:
+;;
+;;   (.writeAttribute w (name key) subdata)
+;;
+;; subdata is passed straight through — no coercion. .writeAttribute
+;; requires a java.lang.String, so any :int, :decimal, :boolean (or other
+;; non-String type) carried as an xml/attr crashes with ClassCastException.
+;;
+;; This is the same family of fragility as the :any -> string-unparser bug,
+;; just on the attribute path. xml-primitives' xmlschema-custom :decimal
+;; schema already declares :encode/string mt/-any->string — the unparser
+;; just isn't using it on the attribute write.
+;;
+;; PROPOSED FIX (unparser.clj attribute writer)
+;; Run the value through the schema's encoder before writing, or coerce
+;; with str / a type-aware fallback:
+;;
+;;   (.writeAttribute w (name key)
+;;     (if (string? subdata) subdata (str subdata)))
+
+(defn- attr-unparser
+  "Build an unparser whose root has one attribute named `:a` of `body-type`."
+  [body-type]
+  (-> (m/schema
+       [:schema
+        {:registry   {:test/Root [:map {:closed true}
+                                  [:a {:xml/attr true} body-type]]}
+         :topElement "Root"}
+        :test/Root]
+       xml-primitives/external-registry)
+      unparser/xml-string-unparser))
+
+(deftest attr-positioned-non-string-crashes
+  (testing ":int attribute crashes"
+    (is (thrown-with-msg? ClassCastException #"Long cannot be cast"
+                          ((attr-unparser :int) {:a 42}))))
+  (testing ":decimal attribute crashes"
+    (is (thrown-with-msg? ClassCastException #"BigDecimal cannot be cast"
+                          ((attr-unparser :decimal) {:a 1.5M}))))
+  (testing ":boolean attribute crashes"
+    (is (thrown-with-msg? ClassCastException #"Boolean cannot be cast"
+                          ((attr-unparser :boolean) {:a true}))))
+  (testing ":string attribute works (baseline)"
+    (is (= "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Root a=\"hi\"></Root>"
+           ((attr-unparser :string) {:a "hi"})))))
+
 ;; ---------- OffsetDateTime round-trip loses the timezone offset ----------
 ;;
 ;; CONTEXT
