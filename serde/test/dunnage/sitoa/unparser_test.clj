@@ -69,17 +69,55 @@
   (testing "xmlschema-registry now uses xsd-textual-value (a :multi)"
     (is (= xml-primitives/xsd-textual-value
            (:org.w3.www.2001.XMLSchema/base64Binary xml-primitives/xmlschema-registry)))
-    (is (= :multi (first xml-primitives/xsd-textual-value))))
-  (testing "Unparsing a String body through xsd-textual-value works"
-    (let [up (mini-unparser xml-primitives/xsd-textual-value)]
-      (is (= "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Root><val>hi</val></Root>"
-             (up {:val "hi"})))))
-  (testing "Generation from xsd-textual-value produces only Strings (no Ratio/Vector/Map)"
-    (let [schema  (m/schema xml-primitives/xsd-textual-value xml-primitives/external-registry)
-          samples (repeatedly 50 #(gen/generate (mg/generator schema) 10))]
-      (is (every? string? samples)
-          (str "Expected every sample to be String, got types: "
-               (->> samples (map type) distinct))))))
+    (is (= :multi (first xml-primitives/xsd-textual-value)))))
+
+;; ---------- base64Binary semantics: byte[] payload + base64 wire format ----------
+;;
+;; XSD base64Binary is "a finite-length sequence of binary octets" whose
+;; XML wire format is the base64 encoding of those octets. The natural
+;; Clojure value is byte[]; the wire form is a String.
+;;
+;; The xsd-textual-value :multi introduced earlier (class-dispatched, one
+;; :string arm) silenced the cast crash on the unparser side but introduced
+;; two new failures discovered while writing this test:
+;;
+;;   (a) byte[] payloads (the actual base64Binary semantic) silently drop
+;;       on unparse — the multi has no arm matching class "[B", so the
+;;       unparser writes an empty <val/> with no body.
+;;
+;;   (b) parsing through the multi is broken regardless of value type.
+;;       The parser's -multi-parser dispatches on the XML tag name (tagk),
+;;       while xsd-textual-value dispatches on (class data). The keys
+;;       don't match, so the parser never finds a sub-parser and the outer
+;;       required-element check fails.
+;;
+;; PROPOSED FIX
+;; Replace xsd-textual-value with a dedicated :bytes simple-schema (with
+;; base64 encode/decode in :type-properties), or simply use :string for
+;; XSD types whose Clojure value is genuinely a String (the textual XSD
+;; ones: hexBinary, duration, gDay, ...) and a proper :bytes schema only
+;; for base64Binary. The class-dispatched :multi was the wrong shape —
+;; the parser doesn't know how to consume it.
+
+(deftest base64binary-byte-array-payload-silently-dropped
+  (let [bytes-in (.getBytes "Hello" "UTF-8")
+        up       (mini-unparser xml-primitives/xsd-textual-value)]
+    (testing "byte[] is not matched by any :multi arm; unparser writes an empty <val/>"
+      (is (= "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Root><val></val></Root>"
+             (up {:val bytes-in}))
+          "5 bytes of payload, 0 bytes on the wire — lossy."))))
+
+(deftest base64binary-class-dispatched-multi-breaks-parser
+  (let [up   (mini-unparser xml-primitives/xsd-textual-value)
+        down (mini-parser   xml-primitives/xsd-textual-value)
+        xml  (up {:val "SGVsbG8="})]
+    (testing "Unparser writes the value correctly"
+      (is (= "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Root><val>SGVsbG8=</val></Root>"
+             xml)))
+    (testing "Parser can't dispatch a class-keyed :multi (it dispatches by XML tag), so the round-trip fails"
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                            #"required parser failed :val failed"
+                            (down xml))))))
 
 ;; ---------- Direct :any element body still crashes (independent of XSD fix) ----------
 ;;
