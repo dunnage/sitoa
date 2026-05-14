@@ -80,10 +80,11 @@
     (with-open [r ^XMLStreamReader (parser/make-stream-reader {} (StringReader. xml))]
       (p r))))
 
-(deftest attachment-roundtrips
-  ;; Attachment is xsd:cat containing a direct [:ref ClinicalInformation-seq].
-  ;; The unparser's -ref-discriminator returns an arity-1 fn but is called
-  ;; with (data pos) when inside a :cat -- "Wrong number of args (2)".
+(deftest attachment-with-clinical-info-ref-child-unparses
+  ;; Attachment is xsd:cat containing a direct [:ref ClinicalInformation-seq]
+  ;; (not wrapped in a tagged tuple like the other children). The unparser's
+  ;; -ref-discriminator returns an arity-1 fn but is called with (data pos)
+  ;; when inside a :cat -- ArityException "Wrong number of args (2)".
   ;; Used in ClinicalInfoResponse, ClinicalInfoRequest, PARequest, etc.
   (let [sample [[:AttachmentSource "EMR"]
                 [:AttachmentData   "SGVsbG8="]
@@ -91,10 +92,11 @@
                 [:MIMEType         "image/png"]]]
     (is (= sample (round-trip-scoped (scoped :script/Attachment "Attachment") sample)))))
 
-(deftest binary-data-roundtrips
+(deftest binary-data-int-attribute-unparses
   ;; BinaryDataType is <Binary LengthBytes="..." >base64...</Binary>.
-  ;; LengthBytes is xsd:int as an attribute -> the attribute unparser path
-  ;; casts the value to String and crashes for any non-String input.
+  ;; LengthBytes is xsd:int delivered as an attribute. The unparser path for
+  ;; attribute values casts the value directly to String, so any non-String
+  ;; (a Long here) crashes with ClassCastException.
   ;; Used in CFMonograph, CFAttachment.
   (let [sample {:LengthBytes 5 :xml/value "SGVsbG8="}]
     (is (= sample (round-trip-scoped (scoped :script/BinaryDataType "Binary") sample)))))
