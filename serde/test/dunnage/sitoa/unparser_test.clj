@@ -81,6 +81,59 @@
           (str "Expected every sample to be String, got types: "
                (->> samples (map type) distinct))))))
 
+;; ---------- Direct :any element body still crashes (independent of XSD fix) ----------
+;;
+;; The xml-primitives fix above only rerouted the *XSD* :any mappings
+;; (base64Binary etc.) — the malli :any schema itself is still dispatched to
+;; string-unparser, which casts data directly to java.lang.String. Any
+;; consumer schema that uses :any directly will hit this fragility.
+;;
+;; PROPOSED FIX (unparser.clj line for :any): route :any through a coercing
+;; handler that does (.writeCharacters w (str data)) instead of casting.
+
+(deftest any-element-body-rejects-non-string-data
+  (let [up (mini-unparser :any)]
+    (testing "String body passes (baseline)"
+      (is (= "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Root><val>hi</val></Root>"
+             (up {:val "hi"}))))
+    (testing "Ratio body throws ClassCastException"
+      (is (thrown-with-msg? ClassCastException #"Ratio cannot be cast"
+                            (up {:val 1/2}))))
+    (testing "Long body throws ClassCastException"
+      (is (thrown-with-msg? ClassCastException #"Long cannot be cast"
+                            (up {:val 42}))))
+    (testing "Map / Vector / Set / Keyword all crash the same way"
+      (is (thrown? ClassCastException (up {:val {}})))
+      (is (thrown? ClassCastException (up {:val []})))
+      (is (thrown? ClassCastException (up {:val #{}})))
+      (is (thrown? ClassCastException (up {:val :kw}))))))
+
+;; ---------- :int element body round-trips to BigDecimal ----------
+;;
+;; The unparser writes :int via string-encode-unparser (correct: emits the
+;; integer as text). The parser, however, reads the text back through the
+;; :decimal decode path (or an equivalent bigdec coercion), so the value
+;; comes out as java.math.BigDecimal instead of Long. Any consumer comparing
+;; via = will see the round-trip fail because (= 0 0M) is false.
+;;
+;; PROPOSED FIX (parser primitive path): when the target schema type is
+;; :int, decode element text via Long/parseLong (or similar) rather than
+;; bigdec. The unparser side is already correct.
+
+(deftest int-element-body-roundtrips-as-bigdecimal
+  (let [up    (mini-unparser :int)
+        down  (mini-parser   :int)
+        input 42
+        xml   (up {:val input})
+        parsed (:val (down xml))]
+    (testing "Unparser emits the integer as plain text"
+      (is (= "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Root><val>42</val></Root>"
+             xml)))
+    (testing "Parser reads it back as BigDecimal, losing the Long type"
+      (is (instance? java.math.BigDecimal parsed))
+      (is (not= input parsed))
+      (is (= 42M parsed)))))
+
 ;; ---------- OffsetDateTime round-trip loses the timezone offset ----------
 ;;
 ;; CONTEXT
