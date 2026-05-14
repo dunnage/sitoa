@@ -175,7 +175,8 @@
                    (-mtype ty context)
                    (-seq-ref ty context))]
       (assert x)
-      (when (not= max-occurs 0) #_(not= (m/children ty-ref) [(keyword default-ns "Extension")])
+      (when (and (not= max-occurs 0)
+                 (not= ty-ref [:ref (keyword default-ns "Extension")]))
         [(->kw x)
          (cond-> {}
                  (= 0 min-occurs)
@@ -238,28 +239,28 @@
                                               content))))
                                 annotations))]
       ;(when docs (prn docs))
-      (when (not= max-occurs 0) #_(not= (m/children ty-ref) [(keyword default-ns "Extension")])
+      (when (not= max-occurs 0)
         (or (when-some [x (.asElementDecl term)]
               (let [ty (.getType x)
                     ty-ref (if (anon-type? ty)
                              (-mtype ty context)
                              (-seq-ref ty context))]
-
-                [(->kw x)
-                 (cond-> {}
-                         (= 0 min-occurs)
-                         (assoc :optional true)
-                         optional-group
-                         (assoc :optional true
-                                :required-in-group true)
-                         docs
-                         (assoc :documentation (first docs)))
-                 (if value-sequence?
-                   [:sequential (if (= 0 min-occurs)
-                                  {:min 1}
-                                  {:min min-occurs})
-                    ty-ref]
-                   ty-ref)])
+                (when (not= ty-ref [:ref (keyword default-ns "Extension")])
+                  [(->kw x)
+                   (cond-> {}
+                           (= 0 min-occurs)
+                           (assoc :optional true)
+                           optional-group
+                           (assoc :optional true
+                                  :required-in-group true)
+                           docs
+                           (assoc :documentation (first docs)))
+                   (if value-sequence?
+                     [:sequential (if (= 0 min-occurs)
+                                    {:min 1}
+                                    {:min min-occurs})
+                      ty-ref]
+                     ty-ref)]))
               )
             (when-some [x (.asModelGroup term)]
               (assert (= "sequence" (str (.getCompositor x))))
@@ -281,7 +282,10 @@
                                            (assoc :optional-group true)))
                   (.getChildren x))))
 
-            (prn :fail (bean in)))))))
+            (when (and (nil? (.asElementDecl term))
+                       (nil? (.asModelGroup term))
+                       (nil? (.asModelGroupDecl term)))
+              (prn :fail (bean in))))))))
 
 (defn wrap-regex [context ^XSParticle in msch]
   (let [min-occurs (.getMinOccurs in)
