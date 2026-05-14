@@ -29,6 +29,17 @@
                                     (mu/schemas)
                                     xmlschema-custom
                                     (malli.experimental.time/schemas))})
+
+(def xsd-textual-value
+  "Schema for XSD types whose XML wire format is a single text node but
+   whose Clojure value may legitimately be one of several types. Modeled as
+   a :multi dispatched on (class data) so malli generation produces a value
+   matching one of the listed arms (instead of the prior :any, which let
+   malli generate arbitrary types like Ratio/Vector/Map that crashed
+   string-unparser's direct cast to String)."
+  [:multi {:dispatch class}
+   [java.lang.String :string]])
+
 (def xmlschema-registry
   {
    :org.w3.www.2001.XMLSchema/QName              :string ;javax.xml.namespace.QName
@@ -38,19 +49,19 @@
    :org.w3.www.2001.XMLSchema/decimal            :decimal
    :org.w3.www.2001.XMLSchema/anyURI,            :string
    :org.w3.www.2001.XMLSchema/boolean            :boolean ;(do (onlywhitespacefacet x) [:boolean {}]) ;"boolean, java.lang.Boolean"
-   :org.w3.www.2001.XMLSchema/base64Binary       :any ;(m/-simple-schema {:type :bytes, :pred bytes?}) ;byte[]
-   :org.w3.www.2001.XMLSchema/hexBinary          :any ;(m/-simple-schema {:type :bytes, :pred bytes?}) ;byte[]
+   :org.w3.www.2001.XMLSchema/base64Binary       xsd-textual-value ;byte[] encoded textually
+   :org.w3.www.2001.XMLSchema/hexBinary          xsd-textual-value ;byte[] encoded textually
    :org.w3.www.2001.XMLSchema/date,              :time/local-date ;javax.xml.datatype.XMLGregorianCalendar
    :org.w3.www.2001.XMLSchema/dateTime,          :time/offset-date-time ;javax.xml.datatype.XMLGregorianCalendar
    :org.w3.www.2001.XMLSchema/time,              :time/local-time ;javax.xml.datatype.XMLGregorianCalendar
-   :org.w3.www.2001.XMLSchema/duration           :any ;javax.xml.datatype.Duration
-   :org.w3.www.2001.XMLSchema/dayTimeDuration    :any ;javax.xml.datatype.Duration
-   :org.w3.www.2001.XMLSchema/yearMonthDuration  :any ;javax.xml.datatype.Duration
-   :org.w3.www.2001.XMLSchema/gDay,              :any ;javax.xml.datatype.XMLGregorianCalendar
-   :org.w3.www.2001.XMLSchema/gMonth,            :any ;javax.xml.datatype.XMLGregorianCalendar
-   :org.w3.www.2001.XMLSchema/gMonthDay,         :any ;javax.xml.datatype.XMLGregorianCalendar
-   :org.w3.www.2001.XMLSchema/gYear,             :any ;javax.xml.datatype.XMLGregorianCalendar
-   :org.w3.www.2001.XMLSchema/gYearMonth,        :any ;javax.xml.datatype.XMLGregorianCalendar
+   :org.w3.www.2001.XMLSchema/duration           xsd-textual-value ;ISO 8601 duration as text
+   :org.w3.www.2001.XMLSchema/dayTimeDuration    xsd-textual-value ;ISO 8601 duration as text
+   :org.w3.www.2001.XMLSchema/yearMonthDuration  xsd-textual-value ;ISO 8601 duration as text
+   :org.w3.www.2001.XMLSchema/gDay,              xsd-textual-value ;XSD gregorian day as text
+   :org.w3.www.2001.XMLSchema/gMonth,            xsd-textual-value ;XSD gregorian month as text
+   :org.w3.www.2001.XMLSchema/gMonthDay,         xsd-textual-value ;XSD gregorian month-day as text
+   :org.w3.www.2001.XMLSchema/gYear,             xsd-textual-value ;XSD gregorian year as text
+   :org.w3.www.2001.XMLSchema/gYearMonth,        xsd-textual-value ;XSD gregorian year-month as text
    :org.w3.www.2001.XMLSchema/integer            :int ;!!!!java.math.BigInteger
    :org.w3.www.2001.XMLSchema/nonPositiveInteger :int ;!!!!java.math.BigInteger
    :org.w3.www.2001.XMLSchema/negativeInteger    :int ;!!!!java.math.BigInteger
