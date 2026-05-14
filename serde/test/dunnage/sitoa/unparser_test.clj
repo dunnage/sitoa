@@ -1,97 +1,67 @@
 (ns dunnage.sitoa.unparser-test
-  (:require [clojure.test :refer :all]
-            [dunnage.sitoa.unparser :refer :all]
-            [dunnage.sitoa.bootstrapped-schema :as schema]
-            [dunnage.sitoa.xml-primitives :as xml-primitives ]
-            [clojure.java.io :as io]
-            [malli.util :as mu]
-            [malli.core :as m]))
+  "Regression / reproduction tests for sitoa unparser issues."
+  (:require
+   [clojure.test :refer [deftest is testing]]
+   [dunnage.sitoa.unparser :as unparser]
+   [dunnage.sitoa.xml-primitives :as xml-primitives]
+   [malli.core :as m]))
 
+(defn- mini-unparser
+  "Build an xml-string-unparser for a tiny schema [:map [:val body-type]]."
+  [body-type]
+  (-> (m/schema
+       [:schema
+        {:registry   {:test/Root [:map {:closed true} [:val {} body-type]]}
+         :topElement "Root"}
+        :test/Root]
+       xml-primitives/external-registry)
+      unparser/xml-string-unparser))
 
-(comment
-  (def message-schema (schema/xsd->schema {:default-ns "script"} (io/resource "NCPDP_20170715/transport.xsd")))
-  (def simple-message-schema  (m/-set-children message-schema (-> message-schema m/children first m/children first vector)))
+;; ---------- :any element body crashes on non-String data ----------
+;;
+;; CONTEXT
+;; xml-primitives.clj/xmlschema-registry maps several XSD types to :any,
+;; including :base64Binary, :hexBinary, :duration, :gDay, :gMonth, :gMonthDay,
+;; :gYear, :gYearMonth. The unparser dispatch in unparser.clj routes :any to
+;; string-unparser, which calls (.writeCharacters w data) — a direct cast to
+;; java.lang.String. Any non-String body value crashes with ClassCastException.
+;;
+;; SURFACED BY
+;; A generative XML round-trip test in the consuming furl project hit this
+;; while exercising :script/Extension :xml/value, whose :Base64Data arm is
+;; typed as :org.w3.www.2001.XMLSchema/base64Binary → :any. malli's default
+;; generator for :any happily emits clojure.lang.Ratio (e.g. -1/2), which
+;; then trips
+;;
+;;   class clojure.lang.Ratio cannot be cast to class java.lang.String
+;;
+;; PROPOSED FIX (unparser.clj, dispatch line for :any): route :any through a
+;; coercing handler instead of string-unparser:
+;;
+;;   :any (any-unparser x in-regex?)
+;;
+;; where
+;;
+;;   (defn any-unparser [x in-regex?]
+;;     (if in-regex?
+;;       (fn [data pos ^XMLStreamWriter w]
+;;         (.writeCharacters w (str data))
+;;         (inc pos))
+;;       (fn [data ^XMLStreamWriter w]
+;;         (.writeCharacters w (str data))
+;;         true)))
+;;
+;; After the fix, flip the (is (thrown? ...)) assertions below to assert the
+;; expected XML output (e.g. <val>1/2</val>, <val>42</val>).
 
-
-  (def up (xml-unparser simple-message-schema))
-  (let [s (StringWriter.)
-        up (xml-unparser simple-message-schema)]
-    (with-open [s s #_(sink (io/file "testout.xml"))]
-      (with-open [w ^XMLStreamWriter (make-stream-writer {} s)]
-        ; (up "AP" w)
-        #_(up {:Text "hi"
-               :Code "hi"} w)
-        (up [:Message {:DatatypesVersion   "20170715",
-                       :TransportVersion   "20170715",
-                       :TransactionDomain  "SCRIPT",
-                       :TransactionVersion "20170715",
-                       :StructuresVersion  "20170715",
-                       :ECLVersion         "20170715",
-                       :Header
-                       {:To                    {:Qualifier "P", :xml/value  "7701630"},
-                        :From                  {:Qualifier "C", :xml/value  "77777777"},
-                        :MessageID             "1234567",
-                        :SentTime              (LocalDateTime/parse "2010-10-01T08:15:22"),
-                        :Security
-                        {:UsernameToken
-                         {:Password {:Type "PasswordDigest", :value "String"},
-                          :Created  (ZonedDateTime/parse "2001-12-17T09:30:47Z")},
-                         :Sender {:SecondaryIdentification "PASSWORDA"}},
-                        :SenderSoftware
-                        {:SenderSoftwareDeveloper      "MDLITE",
-                         :SenderSoftwareProduct        "443",
-                         :SenderSoftwareVersionRelease "2.1"},
-                        :PrescriberOrderNumber "110088"},
-                       :Body
-                       [:NewRx
-                        {:Patient
-                         [:HumanPatient
-                          {:Identification {:SocialSecurity "333445555"},
-                           :Name           {:LastName "SMITH", :FirstName "MARY"},
-                           :Gender         "F",
-                           :DateOfBirth    [:Date (LocalDate/parse "1954-12-25")],
-                           :Address
-                           {:AddressLine1  "45 EAST ROAD SW",
-                            :City          "CLANCY",
-                            :StateProvince "WI",
-                            :PostalCode    "54999",
-                            :CountryCode   "US"},
-                           :CommunicationNumbers
-                           {:PrimaryTelephone {:Number "6512551122"}}}],
-                         :Pharmacy
-                         {:Identification       {:NCPDPID "7701630", :NPI "7878787878"},
-                          :BusinessName         "MAIN STREET PHARMACY",
-                          :CommunicationNumbers {:PrimaryTelephone {:Number "6152205656"}}},
-                         :Prescriber
-                         [:NonVeterinarian
-                          {:Identification {:NPI "666666666"},
-                           :Name           {:LastName "JONES", :FirstName "MARK"},
-                           :Address
-                           {:AddressLine1  "211 CENTRAL ROAD",
-                            :City          "JONESVILLE",
-                            :StateProvince "TN",
-                            :PostalCode    "37777",
-                            :CountryCode   "US"},
-                           :CommunicationNumbers
-                           {:PrimaryTelephone {:Number "6152219800"}}}],
-                         :MedicationPrescribed
-                         {:DrugCoded
-                          {:Strength
-                           {:StrengthValue         "240",
-                            :StrengthForm          {:Code "C42998"},
-                            :StrengthUnitOfMeasure {:Code "C28253"}}},
-                          :DrugDescription       "CALAN SR 240MG",
-                          :WrittenDate           [:Date (LocalDate/parse "2010-10-01")],
-                          :RxFillIndicator       "All Fill Statuses Except Transferred",
-                          :NumberOfRefills       "1",
-                          :PrescriberCheckedREMS "A",
-                          :DaysSupply            "30",
-                          :Substitutions         "0",
-                          :Quantity
-                          {:Value                 "60",
-                           :CodeListQualifier     "38",
-                           :QuantityUnitOfMeasure {:Code "C48542"}},
-                          :Sig                   [[:SigText "TAKE ONE TABLET TWO TIMES A DAY UNTIL GONE"]]}}]}] w)
-        ))
-    (println (.toString s)))
-  )
+(deftest any-element-body-rejects-non-string-data
+  (let [up (mini-unparser :any)]
+    (testing "String body passes (baseline)"
+      (is (= "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Root><val>hi</val></Root>"
+             (up {:val "hi"}))))
+    (testing "Ratio body throws ClassCastException"
+      (is (thrown-with-msg? ClassCastException #"Ratio cannot be cast"
+                            (up {:val 1/2}))))
+    (testing "Long body throws ClassCastException"
+      (is (thrown-with-msg? ClassCastException #"Long cannot be cast"
+                            (up {:val 42}))))))
