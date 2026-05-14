@@ -154,6 +154,61 @@
     (is (thrown-with-msg? IllegalArgumentException #"No matching clause: :double"
                           (mini-unparser :double)))))
 
+;; ---------- :enum dispatches to string-unparser; keyword enums crash ----------
+;;
+;; The unparser dispatch routes :enum → string-unparser, which calls
+;; (.writeCharacters w data) — a direct cast to java.lang.String. malli's
+;; :enum is happy to enumerate keywords (or any value), so a schema like
+;; [:enum :a :b :c] is valid, but unparsing one of its values crashes.
+;;
+;; PROPOSED FIX (unparser.clj :enum dispatch)
+;; Route :enum through string-encode-unparser (or a coercing handler) so
+;; that any enum member is converted via str before writing.
+
+(deftest enum-of-keywords-crashes-on-cast
+  (let [up (mini-unparser [:enum :a :b :c])]
+    (testing "Keyword enum value crashes the unparser"
+      (is (thrown-with-msg? ClassCastException #"Keyword cannot be cast"
+                            (up {:val :a}))))))
+
+;; ---------- Plain :tuple (not the [:enum tag] body shape) asserts ----------
+;;
+;; -tuple-unparser destructures (m/children x) as [enum child] and asserts
+;; (= 1 (count tags)) on (m/children enum) — i.e. it expects every :tuple
+;; to be of the form [:tuple [:enum :SingleTag] body-schema]. A plain
+;; [:tuple :string :int] (two arbitrary types) fails the assertion.
+;;
+;; PROPOSED FIX
+;; Either (a) detect the [:enum :tag] head and use the discriminated path
+;; only in that case, falling back to a generic positional unparser for
+;; arbitrary :tuple shapes, or (b) document that :tuple is only supported
+;; in the tagged-discriminator shape and validate up front with a clearer
+;; error message.
+
+(deftest plain-tuple-crashes-build
+  (testing "[:tuple :string :int] without an :enum tag head fails the unparser assertion"
+    (is (thrown? AssertionError (mini-unparser [:tuple :string :int])))))
+
+;; ---------- :maybe is missing from the unparser dispatch table ----------
+;;
+;; malli's :maybe schema is widely used for optional/nullable values, but
+;; the unparser case form has no clause for it. Building an unparser over
+;; a [:maybe X] body raises IllegalArgumentException ("No matching clause:
+;; :maybe").
+;;
+;; PROPOSED FIX (unparser.clj dispatch table)
+;; Add a :maybe clause that, when the value is nil, writes nothing (or
+;; emits an xsi:nil attribute), and otherwise delegates to the wrapped
+;; schema's unparser:
+;;
+;;   :maybe (let [inner (-xml-unparser (first (m/children x)) in-regex?)]
+;;            (fn [data ...] (when (some? data) (inner data ...))))
+
+(deftest maybe-element-body-unparser-missing
+  (testing "Building an unparser over a [:maybe X] element crashes"
+    (is (thrown-with-msg? IllegalArgumentException #"No matching clause: :maybe"
+                          (mini-unparser [:maybe :string])))))
+
 ;; ---------- OffsetDateTime round-trip loses the timezone offset ----------
 ;;
 ;; CONTEXT
