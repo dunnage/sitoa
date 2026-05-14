@@ -209,6 +209,75 @@
     (is (thrown-with-msg? IllegalArgumentException #"No matching clause: :maybe"
                           (mini-unparser [:maybe :string])))))
 
+;; ---------- Other malli schema types missing from the unparser dispatch ----------
+;;
+;; Beyond :double and :maybe, several other widely-used malli schema types
+;; have no clause in the unparser dispatch case (-xml-unparser, around
+;; line 716). Each one crashes with "No matching clause: <type>" the
+;; moment a schema using it is compiled.
+;;
+;; PROPOSED FIX
+;; Audit the dispatch table against the schemas malli ships with, and
+;; either add clauses (or explicit "unsupported" errors) for each.
+
+(deftest other-schema-types-missing-from-dispatch
+  (doseq [[schema-tag body]
+          [[:nil                  :nil]
+           [:set                  [:set :string]]
+           [:vector               [:vector :string]]
+           [:map-of               [:map-of :keyword :string]]
+           [:time/zoned-date-time :time/zoned-date-time]]]
+    (testing (str schema-tag " has no dispatch entry")
+      (is (thrown-with-msg? IllegalArgumentException
+                            (re-pattern (str "No matching clause: " schema-tag))
+                            (mini-unparser body))))))
+
+;; ---------- Empty :sequential round-trips to nil (data loss) ----------
+;;
+;; A :sequential element with zero entries unparses to no child elements
+;; (correct — an empty collection produces no <val/> nodes). The parser
+;; then has nothing to bind and yields nil instead of []. The empty-vector
+;; data is lost.
+;;
+;; PROPOSED FIX
+;; In the :sequential parser, default to an empty vector when the wrapping
+;; element exists but contains no items. Alternatively, the schema-level
+;; consumer needs to coerce nil -> [] when a :sequential is :optional.
+
+(deftest empty-sequential-roundtrips-to-nil
+  (let [up    (mini-unparser [:sequential :string])
+        down  (mini-parser   [:sequential :string])
+        xml   (up {:val []})
+        parsed (:val (down xml))]
+    (testing "Unparser emits no child elements for an empty vector"
+      (is (= "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Root></Root>"
+             xml)))
+    (testing "Parser yields nil instead of []"
+      (is (nil? parsed))
+      (is (not= [] parsed)))))
+
+;; ---------- :string with carriage return round-trips to LF ----------
+;;
+;; XML normalises end-of-line characters: any \r or \r\n in the textual
+;; content of the wire format is collapsed to a single \n per XML 1.0
+;; section 2.11. The unparser writes \r faithfully but the parser, using
+;; the XMLStreamReader spec-compliant decoding, returns the normalised
+;; \n. Resulting round-trip is lossy for any string containing \r.
+;;
+;; This is technically conformant XML behaviour, but it surfaces as a
+;; surprising "Strings differ" failure in generative testing. Consumers
+;; with \r-bearing data must either base64-encode or use a CDATA section
+;; (sitoa does not currently emit CDATA).
+
+(deftest string-with-cr-roundtrips-to-lf
+  (let [up    (mini-unparser :string)
+        down  (mini-parser   :string)
+        xml   (up {:val "a\rb"})
+        parsed (:val (down xml))]
+    (testing "Round-trip collapses \\r to \\n"
+      (is (= "a\nb" parsed))
+      (is (not= "a\rb" parsed)))))
+
 ;; ---------- OffsetDateTime round-trip loses the timezone offset ----------
 ;;
 ;; CONTEXT
