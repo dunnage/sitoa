@@ -3,16 +3,20 @@
             [malli.core :as m]
             [clojure.xml :as xml]
             [io.pedestal.log :as log]
-            [malli.util :as mu])
+            [malli.util :as mu]
+            [clojure.string :as str]
+            [clojure.set])
   (:import
-    (java.io InputStream Reader StringReader)
-    (java.time.temporal ChronoField)
-    (javax.xml.stream
-      XMLInputFactory XMLStreamReader XMLStreamConstants)
-    (clojure.lang IReduceInit MapEntry ITransientCollection)
-    (java.time LocalDate LocalDateTime OffsetDateTime ZonedDateTime LocalTime)
-    (java.time.format DateTimeFormatter DateTimeFormatterBuilder DateTimeParseException)
-    (java.nio.file Files Path)))
+   (java.io InputStream Reader StringReader)
+   (java.time.temporal ChronoField)
+   (javax.xml.stream
+    XMLInputFactory XMLStreamReader XMLStreamConstants)
+   (clojure.lang IReduceInit MapEntry ITransientCollection)
+   (java.time LocalDate LocalDateTime OffsetDateTime ZonedDateTime LocalTime
+              Duration Period Year YearMonth MonthDay Month)
+   (java.time.format DateTimeFormatter DateTimeFormatterBuilder DateTimeParseException)
+   java.nio.ByteBuffer
+   (java.nio.file Files Path)))
 
 (set! *warn-on-reflection* true)
 (def ^:dynamic *ref-parsers* false)
@@ -61,8 +65,7 @@
     12 {:type :CDATA}
     13 {:type :NAMESPACE}
     14 {:type :NOTATION_DECLARATION}
-    15 {:type :ENTITY_DECLARATION}
-    ))
+    15 {:type :ENTITY_DECLARATION}))
 
 (defn- make-input-factory ^XMLInputFactory [props]
   (let [fac (XMLInputFactory/newInstance)]
@@ -91,11 +94,11 @@
         (3 4 5 6 7 11)                                      ;COMMENT
         (if (.hasNext r)
           (recur (.next r))
-          (throw (ex-info "reached end without safe next tag" {})) );START_DOCUMENT
+          (throw (ex-info "reached end without safe next tag" {})));START_DOCUMENT
         (8) (throw (ex-info "safe next tag will not exit tag or document" {})) ;START_DOCUMENT
         )))
   #_(when-not (= (.getEventType r) 8)
-    (.nextTag r)))
+      (.nextTag r)))
 
 (defn ensure-open-tag ^long [^XMLStreamReader r]
   (loop [tok (.getEventType r)]
@@ -165,7 +168,7 @@
       (instance? Reader source) (.createXMLStreamReader fac ^Reader source)
       (instance? InputStream source) (.createXMLStreamReader fac ^InputStream source)
       :else (throw (IllegalArgumentException.
-                     "source should be java.io.Reader or java.io.InputStream")))))
+                    "source should be java.io.Reader or java.io.InputStream")))))
 
 (defn source [s]
   (io/reader s))
@@ -200,9 +203,7 @@
       (2 3 4 5 6)                                ;COMMENT
       (recur (.next r))
       (7 8) (assert false)                     ;START_DOCUMENT
-      ))
-  )
-
+      )))
 (defn skip-characters [^XMLStreamReader r]
   (loop [tok (.getEventType r)]
     ;(log/info tok)
@@ -251,9 +252,9 @@
       ;(log/info :string-parser (debug-element r) (safe-next-tag r) (debug-element r))
       (LocalDateTime/parse txt)
       #_(try
-        (LocalDateTime/parse txt)
-        (catch DateTimeParseException e
-          (ZonedDateTime/parse txt))))))
+          (LocalDateTime/parse txt)
+          (catch DateTimeParseException e
+            (ZonedDateTime/parse txt))))))
 
 (defn make-formatter []
   (-> (new DateTimeFormatterBuilder)
@@ -302,6 +303,82 @@
       ;(safe-exit-tag r)
        (Boolean/parseBoolean txt))))
 
+(defn decode-base64 [^String s]
+  (.decode (java.util.Base64/getMimeDecoder) s))
+
+(defn decode-hex [^String s]
+  (let [len (count s)
+        data (make-array Byte/TYPE (quot len 2))]
+    (dotimes [i (quot len 2)]
+      (aset-byte data i
+                 (unchecked-byte
+                  (Integer/parseInt (subs s (* i 2) (+ (* i 2) 2)) 16))))
+    data))
+
+(defn read-hiccup [^XMLStreamReader r]
+  (let [tag (get-tag-kw r)
+        attr-count (.getAttributeCount r)
+        attrs (into {} (for [i (range attr-count)]
+                         [(keyword (.getAttributeLocalName r i)) (.getAttributeValue r i)]))
+        children (loop [child-list []]
+                   (if (.hasNext r)
+                     (let [event (.next r)]
+                       (case event
+                         1 ; START_ELEMENT
+                         (recur (conj child-list (read-hiccup r)))
+                         2 ; END_ELEMENT
+                         child-list
+                         (4 12) ; CHARACTERS, CDATA
+                         (let [text (.getText r)]
+                           (recur (if (str/blank? text)
+                                    child-list
+                                    (conj child-list text))))
+                         ; default
+                         (recur child-list)))
+                     child-list))]
+    (if (seq attrs)
+      (into [tag attrs] children)
+      (into [tag] children))))
+
+(defn hiccup-parser [x]
+  (fn [^XMLStreamReader r]
+    (read-hiccup r)))
+
+(defn base64-binary-parser [x]
+  (fn [^XMLStreamReader r]
+    (ByteBuffer/wrap (decode-base64 (.getElementText r)))))
+
+(defn hex-binary-parser [x]
+  (fn [^XMLStreamReader r]
+    (ByteBuffer/wrap (decode-hex (.getElementText r)))))
+
+(defn duration-parser [x]
+  (fn [^XMLStreamReader r]
+    (Duration/parse (.getElementText r))))
+
+(defn period-parser [x]
+  (fn [^XMLStreamReader r]
+    (Period/parse (.getElementText r))))
+
+(defn year-parser [x]
+  (fn [^XMLStreamReader r]
+    (Year/parse (.getElementText r))))
+
+(defn year-month-parser [x]
+  (fn [^XMLStreamReader r]
+    (YearMonth/parse (.getElementText r))))
+
+(defn month-day-parser [x]
+  (fn [^XMLStreamReader r]
+    (MonthDay/parse (.getElementText r))))
+
+(defn month-parser [x]
+  (fn [^XMLStreamReader r]
+    (let [s (.getElementText r)
+          m (re-find #"\d{2}" s)
+          val (Integer/parseInt m)]
+      (Month/of val))))
+
 (defn attribute-reducible
   ""
   [^XMLStreamReader r]
@@ -324,8 +401,6 @@
 
 (defn ap [x]
   x)
-
-
 
 (defn get-ns-tag-kw [^XMLStreamReader r]
   (let [tag (.getLocalName r)
@@ -424,8 +499,7 @@
                                         (required-parser tag parser))
                                       (case (-> dsubschema m/type)
                                         (:alt :cat :or :sequential) (make-tag-discriminator dsubschema)
-                                        nil)]))
-                         ))
+                                        nil)]))))
                       [] children)
         valueparser (transduce
                           (filter (fn [[tag]]
@@ -550,7 +624,9 @@
     (:? :*  :+  :repeat :sequential) (make-tag-discriminator (-single-sub-item x))
     :map (-map-discriminator x)
     :merge  (-alt-discriminator x)
-    (:string :time/offset-date-time :time/local-date :time/local-date-time :enum :re :decimal :double) nil #_(do #{allways-true-discriminator})
+    :xml/hiccup (constantly true)
+    (:string :time/offset-date-time :time/local-date :time/local-date-time :enum :re :decimal :double
+             :xml/base64Binary :xml/hexBinary :time/duration :time/period :time/year :time/year-month :time/month-day :time/month) nil
     ;:any (string-parser x)
     :tuple (-tuple-discriminator x)
     :alt  (-alt-discriminator x)
@@ -630,8 +706,8 @@
         ;_ (log/info children)
         parsers (into {} (map
                            (fn [[k props v]]
-                             [k (-xml-parser v)]
-                             )) children)]
+                             [k (-xml-parser v)]))
+                      children)]
     (fn [^XMLStreamReader r]
       (let [tagk (get-tag-kw r)]
         (when-some [parser (parsers tagk)]
@@ -739,9 +815,8 @@
 
         ;(.next r)
         #_(when (= schema-tag (get-tag-kw r))
-          (safe-next-tag r))
-        toreturn
-        ))))
+            (safe-next-tag r))
+        toreturn))))
 
 (defn -sequential-parser [sequence-tag x]
   (let [children (m/children x)
@@ -841,10 +916,10 @@
        [:re :string] acc
        [:enum :re] acc                                      ;should filter enum items by regex
        [:enum :enum] (m/schema
-                       (into [:enum]
-                             (clojure.set/intersection
-                               (into #{} (m/children acc))
-                               (into #{} (m/children item)))))
+                      (into [:enum]
+                            (clojure.set/intersection
+                             (into #{} (m/children acc))
+                             (into #{} (m/children item)))))))))
 
        ))))
 (defn simplify [schema]
@@ -860,13 +935,11 @@
                  (m/deref-all x)
                  (m/schema? x)
                  (-> x m/deref simplify)
-                 :default x)
-               ))
+                 :default x)))
            simplify-reduce))
 
     :malli.core/schema (recur (m/deref schema))
-    (:enum :re :string) schema
-    ))
+    (:enum :re :string) schema))
 
 (defn toplevel-wrapper [x p]
   (let [{:keys [topElement]} (m/properties x)]
@@ -899,6 +972,15 @@
     :int (decimal-parser x)
     :double (decimal-parser x)
     :any (string-parser x)
+    :xml/hiccup (hiccup-parser x)
+    :xml/base64Binary (base64-binary-parser x)
+    :xml/hexBinary (hex-binary-parser x)
+    :time/duration (duration-parser x)
+    :time/period (period-parser x)
+    :time/year (year-parser x)
+    :time/year-month (year-month-parser x)
+    :time/month-day (month-day-parser x)
+    :time/month (month-parser x)
     :tuple (-tuple-parser x)
     :alt  (-alt-parser x)
     :or  (-or-parser x)
@@ -923,7 +1005,7 @@
     :* (-regex-parser x)
     :+ (-regex-parser x)
     :repeat (-regex-parser x)
-    :nil (fn [r]nil )))
+    :nil (fn [r] nil)))
 
 (defn xml-parser
   "Returns an pure xml-parser function of type `x -> boolean` for a given Schema.
@@ -936,8 +1018,8 @@
                                  [k (-xml-parser (m/-set-children ?schema [v]))]))
                        (:registry (m/properties ?schema)))
            _ (swap! *ref-parsers*
-                  into
-                  items)]
+                    into
+                    items)]
        (get-first-tag (toplevel-wrapper ?schema (-xml-parser (m/schema ?schema options))))))
 
    #_(m/-cached (m/schema ?schema options) :xml-parser -xml-parser)))
@@ -951,8 +1033,5 @@
                         "2022-10-26T21:08:15.258598"
                         "2022-10-26T21:08:15.258598Z"
                         "2022-10-26T21:08:15.2585981"
-                        "2022-10-26T21:08:15.258598+01:00"
-                        ])
-  (into [] (map (fn [txt]  (OffsetDateTime/parse txt (make-formatter)))) offset-patterns)
-
-  )
+                        "2022-10-26T21:08:15.258598+01:00"])
+  (into [] (map (fn [txt]  (OffsetDateTime/parse txt (make-formatter)))) offset-patterns))
