@@ -10,7 +10,6 @@
             [clojure.tools.reader.edn :as edn])
   (:import (java.io PushbackReader)))
 
-
 (comment
 
   (def xsd-schema (m/schema (with-open [r (PushbackReader. (io/reader (io/resource "xsd-schema.edn")))]
@@ -44,14 +43,13 @@
                   (p r))))
 
   (def xsd-parser (xml-parser
-                    (m/schema (schema/xds->registry {:default-ns "xs"} (io/resource "XMLSchema.xsd"))
-                              {:registry xml-primitives/external-registry}
+                   (m/schema (schema/xds->registry {:default-ns "xs"} (io/resource "XMLSchema.xsd"))
+                             {:registry xml-primitives/external-registry})))
 
-                              )))
   (def xsd-parser (let [xsd (m/schema (schema/xds->registry {:default-ns "xs"} (io/resource "XMLSchema.xsd"))
                                       {:registry xml-primitives/external-registry})]
                     (xml-parser
-                      (m/-set-children xsd (-> xsd m/children first m/children first vector)))))
+                     (m/-set-children xsd (-> xsd m/children first m/children first vector)))))
   (def parsed (with-open [s (io/reader (io/resource "XMLSchema.xsd"))]
                 (let [r ^XMLStreamReader (make-stream-reader {} s)]
                   (xsd-parser r))))
@@ -65,5 +63,4 @@
   (def fopparsed (with-open [s (io/reader (io/resource "table-borders-max-ram.fo"))]
                    (let [r ^XMLStreamReader (make-stream-reader {} s)]
                      (fop-parser r))))
-  (select-keys (m/explain message-schema parsed) [:value :errors])
-  )
+  (select-keys (m/explain message-schema parsed) [:value :errors]))

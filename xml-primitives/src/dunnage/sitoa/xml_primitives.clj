@@ -9,7 +9,6 @@
             com.breezeehr.java-time-printing)
   (:import (java.time LocalDateTime LocalDate LocalTime OffsetDateTime ZoneId ZoneOffset)))
 
-
 (defn -string->bigdec [x]
   (if (string? x)
     (try
@@ -25,13 +24,12 @@
                                         :encode/string mt/-any->string}})})
 
 (def external-registry {:registry (merge
-                                    (m/default-schemas)
-                                    (mu/schemas)
-                                    xmlschema-custom
-                                    (malli.experimental.time/schemas))})
+                                   (m/default-schemas)
+                                   (mu/schemas)
+                                   xmlschema-custom
+                                   (malli.experimental.time/schemas))})
 (def xmlschema-registry
-  {
-   :org.w3.www.2001.XMLSchema/QName              :string ;javax.xml.namespace.QName
+  {:org.w3.www.2001.XMLSchema/QName              :string ;javax.xml.namespace.QName
    :org.w3.www.2001.XMLSchema/NOTATION           :string ;javax.xml.namespace.QName
    :org.w3.www.2001.XMLSchema/float              :double
    :org.w3.www.2001.XMLSchema/double             :double
@@ -119,10 +117,9 @@
                                                             :org.w3.www.2001.XMLSchema/ID
                                                             :org.w3.www.2001.XMLSchema/IDREF
                                                             :org.w3.www.2001.XMLSchema/ENTITY
-                                                            :org.w3.www.2001.XMLSchema/untypedAtomic]
-   })
+                                                            :org.w3.www.2001.XMLSchema/untypedAtomic]})
 
-(defn make-schema [malli-registry start-type ]
+(defn make-schema [malli-registry start-type]
   (m/schema [:schema {:registry
                       malli-registry}
              start-type]
@@ -131,10 +128,10 @@
 (defn closed-make-schema [malli-registry start-type]
   (m/schema [:schema {:registry
                       (reduce-kv
-                        (fn [acc k v]
-                          (assoc acc k (mu/closed-schema v)))
-                        {}
-                        malli-registry)}
+                       (fn [acc k v]
+                         (assoc acc k (mu/closed-schema v)))
+                       {}
+                       malli-registry)}
              start-type]
             external-registry))
 

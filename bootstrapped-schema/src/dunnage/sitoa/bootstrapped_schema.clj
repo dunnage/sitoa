@@ -32,15 +32,14 @@
   (let [uri
         (new URI x)]
     ;(prn (bean uri))
-    (case (.getScheme uri )
+    (case (.getScheme uri)
       "urn" (-> []
                 (into (reverse (clojure.string/split (str (.getSchemeSpecificPart uri)) #":")))
                 (->> (clojure.string/join ".")))
       (-> []
           (into (reverse (clojure.string/split (.getHost uri) #"\.")))
           (into (remove empty?) (clojure.string/split (.getPath uri) #"\/"))
-          (->> (clojure.string/join "."))))
-    ))
+          (->> (clojure.string/join "."))))))
 
 (defn not-empty-string [^String x]
   (when-not (.isEmpty x)
@@ -65,65 +64,62 @@
                 base)
         {:keys [enum pattern] :as f}
         (reduce
-          (fn
-            [acc ^XSFacet facet]
-            (let [name (.getName facet)
-                  value (.getValue facet)
-                  fixed (.isFixed facet)
-                  annotations (some-> (.getAnnotation facet false)
+         (fn
+           [acc ^XSFacet facet]
+           (let [name (.getName facet)
+                 value (.getValue facet)
+                 fixed (.isFixed facet)
+                 annotations (some-> (.getAnnotation facet false)
                                      .getAnnotation)]
-              (case name
-                "enumeration" (update acc :enum (fn [old]
-                                                  (let [old (if old
-                                                              old
-                                                              [:enum {}])
-                                                        value (.toString ^XmlString value)
-                                                        docs (not-empty (into []
-                                                                              (comp
-                                                                                (mapcat (fn [{:keys [tag content]}]
-                                                                                          (when (= tag :xsd:documentation)
-                                                                                            content))))
-                                                                              annotations))]
-                                                    (cond-> (conj old value)
-                                                            docs
-                                                            (assoc-in [1 :value-documentation value] docs))
-                                                    )) )
-                "length" (let [l (Long/parseLong (str value))]
-                           (when annotations
-                             (prn annotations))
-                           (assoc acc :min l
-                                      :max l))
-                "maxLength" (do  (when annotations
-                                   (prn annotations))
-                                 (assoc acc :max (Long/parseLong (str value)))
-                                )
-                "minLength" (do (when annotations
+             (case name
+               "enumeration" (update acc :enum (fn [old]
+                                                 (let [old (if old
+                                                             old
+                                                             [:enum {}])
+                                                       value (.toString ^XmlString value)
+                                                       docs (not-empty (into []
+                                                                             (comp
+                                                                              (mapcat (fn [{:keys [tag content]}]
+                                                                                        (when (= tag :xsd:documentation)
+                                                                                          content))))
+                                                                             annotations))]
+                                                   (cond-> (conj old value)
+                                                     docs
+                                                     (assoc-in [1 :value-documentation value] docs)))))
+               "length" (let [l (Long/parseLong (str value))]
+                          (when annotations
+                            (prn annotations))
+                          (assoc acc :min l
+                                 :max l))
+               "maxLength" (do  (when annotations
                                   (prn annotations))
-                                (assoc acc :min (Long/parseLong (str value))))
-                "pattern" (do     (when annotations
-                                    (prn annotations))                            ;(prn (str value))
-                            (assoc acc :pattern [:re
-                                                 (let [re (str value)]
-                                                   (case re
-                                                     "\\i\\c*" name-regex
-                                                     "[\\i-[:]][\\c-[:]]*" name-regex
-                                                     re))
-                                                 ]))
-                "whiteSpace" (do (when annotations
-                                   (prn annotations))
-                                 acc))))                         ;"preserve replace collapse))
-          {}
-          facets)
+                                (assoc acc :max (Long/parseLong (str value))))
+               "minLength" (do (when annotations
+                                 (prn annotations))
+                               (assoc acc :min (Long/parseLong (str value))))
+               "pattern" (do     (when annotations
+                                   (prn annotations))                            ;(prn (str value))
+                                 (assoc acc :pattern [:re
+                                                      (let [re (str value)]
+                                                        (case re
+                                                          "\\i\\c*" name-regex
+                                                          "[\\i-[:]][\\c-[:]]*" name-regex
+                                                          re))]))
+               "whiteSpace" (do (when annotations
+                                  (prn annotations))
+                                acc))))                         ;"preserve replace collapse))
+         {}
+         facets)
         base-string (not-empty (dissoc f :enum :pattern))]
     (-> (cond-> [:and]
-                base-string
-                (conj [:string base-string])
-                enum
-                (conj enum)
-                pattern
-                (conj pattern)
-                base
-                (conj base))
+          base-string
+          (conj [:string base-string])
+          enum
+          (conj enum)
+          pattern
+          (conj pattern)
+          base
+          (conj base))
         (unwrap-and :string))))
 
 (defn ->nskw [^XSDeclaration x default-ns]
@@ -176,17 +172,16 @@
                    (-seq-ref ty context))]
       (assert x)
       (when (not= max-occurs 0) #_(not= (m/children ty-ref) [(keyword default-ns "Extension")])
-        [(->kw x)
-         (cond-> {}
-                 (= 0 min-occurs)
-                 (assoc :optional true))
-         (if (or (> max-occurs 1) (= max-occurs -1))
-           [:sequential (if (= 0 min-occurs)
-                          {:min 1}
-                          {:min min-occurs})
-            ty-ref]
-           ty-ref)])
-      )))
+            [(->kw x)
+             (cond-> {}
+               (= 0 min-occurs)
+               (assoc :optional true))
+             (if (or (> max-occurs 1) (= max-occurs -1))
+               [:sequential (if (= 0 min-occurs)
+                              {:min 1}
+                              {:min min-occurs})
+                ty-ref]
+               ty-ref)]))))
 
 (defn simplify-fields [props]
   (fn ([] [:map (assoc props :x :x)])
@@ -196,7 +191,7 @@
        acc))
     ([acc val]
      #_(when (#{:map :merge} (first acc))
-       (prn acc))
+         (prn acc))
      (case (first acc)
        :map
        (case (first val)
@@ -233,55 +228,54 @@
                               .getAnnotation)
           docs (not-empty (into []
                                 (comp
-                                  (mapcat (fn [{:keys [tag content]}]
-                                            (when (= tag :xsd:documentation)
-                                              content))))
+                                 (mapcat (fn [{:keys [tag content]}]
+                                           (when (= tag :xsd:documentation)
+                                             content))))
                                 annotations))]
       ;(when docs (prn docs))
       (when (not= max-occurs 0) #_(not= (m/children ty-ref) [(keyword default-ns "Extension")])
-        (or (when-some [x (.asElementDecl term)]
-              (let [ty (.getType x)
-                    ty-ref (if (anon-type? ty)
-                             (-mtype ty context)
-                             (-seq-ref ty context))]
+            (or (when-some [x (.asElementDecl term)]
+                  (let [ty (.getType x)
+                        ty-ref (if (anon-type? ty)
+                                 (-mtype ty context)
+                                 (-seq-ref ty context))]
 
-                [(->kw x)
-                 (cond-> {}
-                         (= 0 min-occurs)
-                         (assoc :optional true)
-                         optional-group
-                         (assoc :optional true
-                                :required-in-group true)
-                         docs
-                         (assoc :documentation (first docs)))
-                 (if value-sequence?
-                   [:sequential (if (= 0 min-occurs)
-                                  {:min 1}
-                                  {:min min-occurs})
-                    ty-ref]
-                   ty-ref)])
-              )
-            (when-some [x (.asModelGroup term)]
-              (assert (= "sequence" (str (.getCompositor x))))
-              (assert (not value-sequence?))
-              (transduce
-                (keep (handle-fields-wrapper2 (assoc context :optional-group (= 0 min-occurs))))
-                (simplify-fields (cond-> {:closed true}
-                                         (= 0 min-occurs)
-                                         (assoc :optional-group true)))
-                (.getChildren x)))
-            (when-some [mgd (.asModelGroupDecl term)]
-              (when-some [x (.getModelGroup mgd)]
-                (assert (= "sequence" (str (.getCompositor x))))
-                (assert (not value-sequence?))
-                (transduce
-                  (keep (handle-fields-wrapper2 (assoc context :optional-group (= 0 min-occurs))))
-                  (simplify-fields (cond-> {:closed true}
-                                           (= 0 min-occurs)
-                                           (assoc :optional-group true)))
-                  (.getChildren x))))
+                    [(->kw x)
+                     (cond-> {}
+                       (= 0 min-occurs)
+                       (assoc :optional true)
+                       optional-group
+                       (assoc :optional true
+                              :required-in-group true)
+                       docs
+                       (assoc :documentation (first docs)))
+                     (if value-sequence?
+                       [:sequential (if (= 0 min-occurs)
+                                      {:min 1}
+                                      {:min min-occurs})
+                        ty-ref]
+                       ty-ref)]))
+                (when-some [x (.asModelGroup term)]
+                  (assert (= "sequence" (str (.getCompositor x))))
+                  (assert (not value-sequence?))
+                  (transduce
+                   (keep (handle-fields-wrapper2 (assoc context :optional-group (= 0 min-occurs))))
+                   (simplify-fields (cond-> {:closed true}
+                                      (= 0 min-occurs)
+                                      (assoc :optional-group true)))
+                   (.getChildren x)))
+                (when-some [mgd (.asModelGroupDecl term)]
+                  (when-some [x (.getModelGroup mgd)]
+                    (assert (= "sequence" (str (.getCompositor x))))
+                    (assert (not value-sequence?))
+                    (transduce
+                     (keep (handle-fields-wrapper2 (assoc context :optional-group (= 0 min-occurs))))
+                     (simplify-fields (cond-> {:closed true}
+                                        (= 0 min-occurs)
+                                        (assoc :optional-group true)))
+                     (.getChildren x))))
 
-            (prn :fail (bean in)))))))
+                (prn :fail (bean in)))))))
 
 (defn wrap-regex [context ^XSParticle in msch]
   (let [min-occurs (.getMinOccurs in)
@@ -305,8 +299,7 @@
       ;can-be-empty?
       ;[:maybe msch]
       :else
-      msch
-      )))
+      msch)))
 
 (defn handle-element-decl [{default-ns :default-ns :as context} ^XSElementDecl x]
   ;(prn (->nskw x (:default-ns context)) (.isGlobal x) (anon-type? x))
@@ -353,14 +346,14 @@
 (defn group-particle [context ^XSParticle in]
   (let [t (.getTerm in)
         out (or
-              (when-some [el (.asElementDecl t)]
-                (handle-element-decl context el))
-              (some->> (.asModelGroup t)
-                       (handle-model-group context))
-              (some->> (.asModelGroupDecl t)
-                       (handle-model-group-decl context))
-              (some-> (.asWildcard t)
-                      handle-wildcard))]
+             (when-some [el (.asElementDecl t)]
+               (handle-element-decl context el))
+             (some->> (.asModelGroup t)
+                      (handle-model-group context))
+             (some->> (.asModelGroupDecl t)
+                      (handle-model-group-decl context))
+             (some-> (.asWildcard t)
+                     handle-wildcard))]
     (wrap-regex context in out)))
 
 (defn handle-toplevel-particle [context ^XSParticle in]
@@ -368,26 +361,25 @@
     (assert (not (some-> (.asElementDecl t))))
     ;(assert (not (.isRepeated x)) (pr-str (bean x)))
     (or
-      (some->> (.asModelGroup t)
-               (handle-model-group context))
-      (some->> (.asModelGroupDecl t)
-               (handle-model-group-decl context))
-      (some-> (.asWildcard t)
-              handle-wildcard))))
+     (some->> (.asModelGroup t)
+              (handle-model-group context))
+     (some->> (.asModelGroupDecl t)
+              (handle-model-group-decl context))
+     (some-> (.asWildcard t)
+             handle-wildcard))))
 
 (defn all-maps? [x]
   (transduce
-    (drop 2)
-    (fn ([acc] (if (nil? acc)
-                 false
-                 acc))
-      ([acc nv]
-       (if (= #{:map :merge} (nth nv 0))
-         true
-         (reduced false))))
-    nil
-    x)
-  )
+   (drop 2)
+   (fn ([acc] (if (nil? acc)
+                false
+                acc))
+     ([acc nv]
+      (if (= #{:map :merge} (nth nv 0))
+        true
+        (reduced false))))
+   nil
+   x))
 (defn handle-model-group [context ^XSModelGroup x]
   (let [compositor (str (.getCompositor x))
         fields (.getChildren x)]
@@ -400,30 +392,30 @@
                    (every-sequence? (atom #{}) x)
                    (if (:sequence context)
                      (transduce
-                       (keep (handle-fields-wrapper2 (dissoc context :sequence)))
-                       (simplify-fields {:xml/in-seq-ex true :closed true})
-                       fields)
+                      (keep (handle-fields-wrapper2 (dissoc context :sequence)))
+                      (simplify-fields {:xml/in-seq-ex true :closed true})
+                      fields)
                      (transduce
-                       (keep (handle-fields-wrapper2 context))
-                       (simplify-fields {:closed true})
-                       fields))
+                      (keep (handle-fields-wrapper2 context))
+                      (simplify-fields {:closed true})
+                      fields))
                    :default
                    (transduce
-                     (map identity)
-                     (fn
-                       ([acc] (if (all-maps? acc )
-                                (if (= (count acc)  3)
-                                  (nth acc 2)
-                                  (assoc acc 0 :merge))
-                                acc))
-                       ([acc nv]
-                        (if-some [n (group-particle (assoc context
-                                                      :sequence true
-                                                      :compositor "sequence") nv)]
-                          (conj acc n)
-                          acc)))
-                     [:cat {}]
-                     fields))
+                    (map identity)
+                    (fn
+                      ([acc] (if (all-maps? acc)
+                               (if (= (count acc)  3)
+                                 (nth acc 2)
+                                 (assoc acc 0 :merge))
+                               acc))
+                      ([acc nv]
+                       (if-some [n (group-particle (assoc context
+                                                          :sequence true
+                                                          :compositor "sequence") nv)]
+                         (conj acc n)
+                         acc)))
+                    [:cat {}]
+                    fields))
       "choice" (cond
                  (and (= 1 (count fields))
                       (instance? XSWildcard$Any (first fields)))
@@ -433,15 +425,15 @@
                           :alt
                           :or)]
                        (keep #(group-particle (assoc context
-                                                :compositor "choice") %))
+                                                     :compositor "choice") %))
                        fields)
                  #_(let [part (reduce
-                                (fn [acc nv] (group-particle-seq
-                                               (assoc context
-                                                 :named-part false
-                                                 :compositor "choice") acc nv))
-                                []
-                                fields)]
+                               (fn [acc nv] (group-particle-seq
+                                             (assoc context
+                                                    :named-part false
+                                                    :compositor "choice") acc nv))
+                               []
+                               fields)]
                      (if (every? (comp #{:tuple} first) part)
                        #_(into [:multi {:dispatch 'first}]
                                (keep (fn [[_tuple _args [_enum enum-value] t]]
@@ -455,9 +447,9 @@
               :any
               (every-sequence? (atom #{}) x)
               (transduce
-                (keep(handle-fields-wrapper2 context))
-                (simplify-fields {:closed true})
-                fields)
+               (keep (handle-fields-wrapper2 context))
+               (simplify-fields {:closed true})
+               fields)
               :default [compositor (map #(group-particle context %) fields)]))))
 
 (defn handle-model-group-decl [{default-ns :default-ns :as context} ^XSModelGroupDecl x]
@@ -474,42 +466,41 @@
                             .getAnnotation)
         docs (not-empty (into []
                               (comp
-                                (mapcat (fn [{:keys [tag content]}]
-                                          (when (= tag :xsd:documentation)
-                                            content))))
+                               (mapcat (fn [{:keys [tag content]}]
+                                         (when (= tag :xsd:documentation)
+                                           content))))
                               annotations))]
     (some->> (eduction
-               (map (fn [^XSAttributeUse attr-use]
-                      (let [decl (.getDecl attr-use)
-                            annotations (some-> (.getAnnotation decl false)
-                                                .getAnnotation)
-                            docs (not-empty (into []
-                                                  (comp
-                                                    (mapcat (fn [{:keys [tag content]}]
-                                                              (when (= tag :xsd:documentation)
-                                                                content))))
-                                                  annotations))
-                            name (.getName decl)
-                            attrns (some-> (.getTargetNamespace decl) not-empty-string uri->ns)
-                            ty (.getType decl)
-                            tyref (if (anon-type? ty)
-                                    (-mtype ty context)
-                                    (-seq-ref ty context))]
-                        [(if (and attrns (not (.isEmpty attrns)))
-                           (keyword attrns name)
-                           (keyword name))
-                         (cond->  {:xml/attr true}
-                                  (not (.isRequired attr-use))
-                                  (assoc  :optional true)
-                                  docs
-                                  (assoc  :attr-documentation (first docs))
-                                  )
-                         tyref])))
-               (.getAttributeUses x))
+              (map (fn [^XSAttributeUse attr-use]
+                     (let [decl (.getDecl attr-use)
+                           annotations (some-> (.getAnnotation decl false)
+                                               .getAnnotation)
+                           docs (not-empty (into []
+                                                 (comp
+                                                  (mapcat (fn [{:keys [tag content]}]
+                                                            (when (= tag :xsd:documentation)
+                                                              content))))
+                                                 annotations))
+                           name (.getName decl)
+                           attrns (some-> (.getTargetNamespace decl) not-empty-string uri->ns)
+                           ty (.getType decl)
+                           tyref (if (anon-type? ty)
+                                   (-mtype ty context)
+                                   (-seq-ref ty context))]
+                       [(if (and attrns (not (.isEmpty attrns)))
+                          (keyword attrns name)
+                          (keyword name))
+                        (cond->  {:xml/attr true}
+                          (not (.isRequired attr-use))
+                          (assoc  :optional true)
+                          docs
+                          (assoc  :attr-documentation (first docs)))
+                        tyref])))
+              (.getAttributeUses x))
              not-empty
              (into [:map (cond-> {:closed        true}
-                                 docs
-                                 (assoc  :documentation (first docs)))]))))
+                           docs
+                           (assoc  :documentation (first docs)))]))))
 
 (defn complex-tag [complex]
   (when (vector? complex)
@@ -551,9 +542,9 @@
         simple simple
         complex complex
         empt (or attr-map [:map {:empty true}]) #_(do
-               (prn (bean ct))
-               (throw (ex-info "empty" {} #_{:x (bean ct)}))
-               :any))))
+                                                    (prn (bean ct))
+                                                    (throw (ex-info "empty" {} #_{:x (bean ct)}))
+                                                    :any))))
   (-seq-possible? [x context]
     true)
   (-seq-ref [x context]
@@ -562,8 +553,7 @@
                       .asParticle)
              (:sequence context))
       (wrap-ref-np (->nskw-seq x (:default-ns context)))
-      (wrap-ref-np (->nskw x (:default-ns context))))
-    ))
+      (wrap-ref-np (->nskw x (:default-ns context))))))
 
 (defn union-reducible [^XSUnionSimpleType in]
   (let [cnt (.getMemberSize in)]
@@ -594,8 +584,7 @@
   (-seq-ref [x context]
     (if (:sequence context)
       (wrap-ref-np (->nskw-seq x (:default-ns context)))
-      (wrap-ref-np (->nskw x (:default-ns context))))
-    ))
+      (wrap-ref-np (->nskw x (:default-ns context))))))
 
 (extend-protocol MalliXML
   XSRestrictionSimpleType
@@ -604,8 +593,8 @@
           base-type    (some-> x .getSimpleBaseType)]
       #_(prn (.getVariety x))
       #_(when (= (get-primitive-type x) "length_range_Type")
-        (prn (type x))
-        (pp/pprint (bean x)))
+          (prn (type x))
+          (pp/pprint (bean x)))
       (case (.toString (.getVariety x))
         "atomic"
         (if (.isPrimitive x)
@@ -622,7 +611,7 @@
             "string", (malli-string-primitive x context)
 
             #_#_nil (do                                         ;(prn (bean x))
-                  (-mtype base-type context))))
+                      (-mtype base-type context))))
         "list"
         (if-some [ltype (.asList x)]
           (let [it (.getItemType ltype)]
@@ -632,29 +621,26 @@
               (prn it)
               [:sequence {:primitive true}
                (if (anon-type? it)
-                   (-mtype it (dissoc context :sequence))
-                   (-seq-ref it (dissoc context :sequence)))]))
+                 (-mtype it (dissoc context :sequence))
+                 (-seq-ref it (dissoc context :sequence)))]))
           (case (get-primitive-type x)
             "IDREFS" :string
             "ENTITIES" :string
-            "NMTOKENS" :string
-            ))
+            "NMTOKENS" :string))
         "union"
         (let []
           (throw (ex-info "union is not supported yet" {}))
           [:any {:name (.getName x)}]
           #_(if (identical? ct x)
-            (do (prn (.getName x) (.getDeclaredFacets x)) #_(pp/pprint (bean x))
-                )
-            [:sequence {:primitive true}
-             (if (anon-type? ct)
-               (-mtype ct (dissoc context :sequence))
-               (-seq-ref ct (dissoc context :sequence)))])))))
+              (do (prn (.getName x) (.getDeclaredFacets x)) #_(pp/pprint (bean x)))
+              [:sequence {:primitive true}
+               (if (anon-type? ct)
+                 (-mtype ct (dissoc context :sequence))
+                 (-seq-ref ct (dissoc context :sequence)))])))))
   (-seq-possible? [x context]
     false)
   (-seq-ref [x context]
-    [:ref (->nskw x (:default-ns context))]
-    ))
+    [:ref (->nskw x (:default-ns context))]))
 
 (extend-protocol MalliXML
   XSListSimpleType
@@ -664,8 +650,7 @@
   (-seq-possible? [x context]
     false)
   (-seq-ref [x context]
-    [:ref (->nskw x (:default-ns context))]
-    ))
+    [:ref (->nskw x (:default-ns context))]))
 
 (defn ^XSSchemaSet parse-xsd
   [f]
@@ -676,29 +661,26 @@
                                (^void error [_ ^SAXParseException x] (prn x))
                                (^void fatalError [_ ^SAXParseException x] (prn x))))
     (.setAnnotationParser parser (reify AnnotationParserFactory
-                            (create [_]
-                              (push-thread-bindings {
-                                                     #'clojure.xml/*stack* nil
-                                                     #'clojure.xml/*current* (struct clojure.xml/element)
-                                                     #'clojure.xml/*state* :between
-                                                     #'clojure.xml/*sb* nil})
-                              (proxy [AnnotationParser] []
-                                (getContentHandler [
-                                                    ^AnnotationContext context,
-                                                    ^String parentElementName,
-                                                    ^ErrorHandler errorHandler,
-                                                    ^EntityResolver entityResolver ]
+                                   (create [_]
+                                     (push-thread-bindings {#'clojure.xml/*stack* nil
+                                                            #'clojure.xml/*current* (struct clojure.xml/element)
+                                                            #'clojure.xml/*state* :between
+                                                            #'clojure.xml/*sb* nil})
+                                     (proxy [AnnotationParser] []
+                                       (getContentHandler [^AnnotationContext context,
+                                                           ^String parentElementName,
+                                                           ^ErrorHandler errorHandler,
+                                                           ^EntityResolver entityResolver]
 
-                                  clojure.xml/content-handler)
-                                (getResult [old]
-                                  (let [result clojure.xml/*current*]
+                                         clojure.xml/content-handler)
+                                       (getResult [old]
+                                         (let [result clojure.xml/*current*]
 
-                                    (pop-thread-bindings)
-                                    (into []
-                                          (mapcat :content)
-                                          (:content result)))
-                                  )))
-                            ))
+                                           (pop-thread-bindings)
+                                           (into []
+                                                 (mapcat :content)
+                                                 (:content result))))))))
+
     (.parse parser f)
     (.getResult parser)))
 
@@ -713,35 +695,35 @@
   (let [seq-context (assoc context :sequence true)]
     (-> xml-primitives/xmlschema-registry
         (into
-          (comp
-            (remove (fn [^XSType x]
-                      (some-> x .asSimpleType .isPrimitive)))
-            (filter #(-seq-possible? % nil))
-            (remove #(-> (->nskw-seq % default-ns) namespace (= "org.w3.www.2001.XMLSchema")))
-            (map #(vector (->nskw-seq % default-ns) (-mtype % seq-context))))
-          (iterator-seq (.iterateTypes schema)))
+         (comp
+          (remove (fn [^XSType x]
+                    (some-> x .asSimpleType .isPrimitive)))
+          (filter #(-seq-possible? % nil))
+          (remove #(-> (->nskw-seq % default-ns) namespace (= "org.w3.www.2001.XMLSchema")))
+          (map #(vector (->nskw-seq % default-ns) (-mtype % seq-context))))
+         (iterator-seq (.iterateTypes schema)))
         (into
-          (comp
-            (remove (fn [^XSType x]
-                      (some-> x .asSimpleType .isPrimitive)))
-            (remove #(-> (->nskw % default-ns) namespace (= "org.w3.www.2001.XMLSchema")))
-            (map #(vector (->nskw % default-ns) (-mtype % context))))
-          (iterator-seq (.iterateTypes schema)))
+         (comp
+          (remove (fn [^XSType x]
+                    (some-> x .asSimpleType .isPrimitive)))
+          (remove #(-> (->nskw % default-ns) namespace (= "org.w3.www.2001.XMLSchema")))
+          (map #(vector (->nskw % default-ns) (-mtype % context))))
+         (iterator-seq (.iterateTypes schema)))
 
         (into
-          (comp
-            (filter (fn [^XSModelGroupDecl x]
-                      (.isGlobal x)))
-            (remove #(-> (->nskw-seq % default-ns) namespace (= "org.w3.www.2001.XMLSchema")))
-            (map #(vector (->nskw-seq % default-ns) (-mtype % seq-context))))
-          (iterator-seq (.iterateModelGroupDecls schema)))
+         (comp
+          (filter (fn [^XSModelGroupDecl x]
+                    (.isGlobal x)))
+          (remove #(-> (->nskw-seq % default-ns) namespace (= "org.w3.www.2001.XMLSchema")))
+          (map #(vector (->nskw-seq % default-ns) (-mtype % seq-context))))
+         (iterator-seq (.iterateModelGroupDecls schema)))
         (into
-          (comp
-            (filter (fn [^XSModelGroupDecl x]
-                      (.isGlobal x)))
-            (remove #(-> (->nskw % default-ns) namespace (= "org.w3.www.2001.XMLSchema")))
-            (map #(vector (->nskw % default-ns) (-mtype % context))))
-          (iterator-seq (.iterateModelGroupDecls schema))))))
+         (comp
+          (filter (fn [^XSModelGroupDecl x]
+                    (.isGlobal x)))
+          (remove #(-> (->nskw % default-ns) namespace (= "org.w3.www.2001.XMLSchema")))
+          (map #(vector (->nskw % default-ns) (-mtype % context))))
+         (iterator-seq (.iterateModelGroupDecls schema))))))
 
 (defn xsd->schema [context f]
   (let [schema (parse-xsd f)
@@ -758,24 +740,24 @@
 
 (defn trim-registry-for-top-types- [full-registry trimmed-registry next-keys]
   (if-some [new-keys (->> next-keys
-                       (into []
-                             (comp (remove trimmed-registry)))
+                          (into []
+                                (comp (remove trimmed-registry)))
                           not-empty)]
     (let [new-registry (select-keys full-registry new-keys)
           new-refs (atom #{})]
       (reduce-kv
-        (fn [_ k v]
-          (m/walk v
-                  (m/schema-walker
-                    (fn [sch]
-                      (case (m/type sch)
-                        :ref (swap! new-refs conj (-> sch m/children first))
-                        :malli.core/schema (when (m/-reference? (m/form sch))
-                                             (swap! new-refs conj (m/form sch)))
-                        nil)
-                      sch))))
-        nil
-        new-registry)
+       (fn [_ k v]
+         (m/walk v
+                 (m/schema-walker
+                  (fn [sch]
+                    (case (m/type sch)
+                      :ref (swap! new-refs conj (-> sch m/children first))
+                      :malli.core/schema (when (m/-reference? (m/form sch))
+                                           (swap! new-refs conj (m/form sch)))
+                      nil)
+                    sch))))
+       nil
+       new-registry)
       (recur full-registry (into trimmed-registry new-registry) @new-refs))
     trimmed-registry))
 
@@ -790,16 +772,15 @@
     (binding [*out* w]
       (.write w "{")
       (reduce-kv
-        (fn [acc k v]
-          (.write w (pr-str k))
-          (.write w "\n")
-          (fipp (m/form v) {:writer w})
+       (fn [acc k v]
+         (.write w (pr-str k))
+         (.write w "\n")
+         (fipp (m/form v) {:writer w})
           ;(.write w "\n")
-          )
-        w
-        (-> schema m/properties :registry into-sorted-map))
-      (.write w "}")
-      )))
+         )
+       w
+       (-> schema m/properties :registry into-sorted-map))
+      (.write w "}"))))
 
 (defn serialize-schema [schema filename]
   (with-open [w (io/writer filename)]

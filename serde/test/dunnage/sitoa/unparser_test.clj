@@ -2,16 +2,14 @@
   (:require [clojure.test :refer :all]
             [dunnage.sitoa.unparser :refer :all]
             [dunnage.sitoa.bootstrapped-schema :as schema]
-            [dunnage.sitoa.xml-primitives :as xml-primitives ]
+            [dunnage.sitoa.xml-primitives :as xml-primitives]
             [clojure.java.io :as io]
             [malli.util :as mu]
             [malli.core :as m]))
 
-
 (comment
   (def message-schema (schema/xsd->schema {:default-ns "script"} (io/resource "NCPDP_20170715/transport.xsd")))
   (def simple-message-schema  (m/-set-children message-schema (-> message-schema m/children first m/children first vector)))
-
 
   (def up (xml-unparser simple-message-schema))
   (let [s (StringWriter.)
@@ -91,7 +89,5 @@
                           {:Value                 "60",
                            :CodeListQualifier     "38",
                            :QuantityUnitOfMeasure {:Code "C48542"}},
-                          :Sig                   [[:SigText "TAKE ONE TABLET TWO TIMES A DAY UNTIL GONE"]]}}]}] w)
-        ))
-    (println (.toString s)))
-  )
+                          :Sig                   [[:SigText "TAKE ONE TABLET TWO TIMES A DAY UNTIL GONE"]]}}]}] w)))
+    (println (.toString s))))
