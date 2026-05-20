@@ -388,7 +388,7 @@
                    (and (= 1 (count fields))
                         (when-some [wc (some-> fields first .getTerm .asWildcard)]
                           (instance? XSWildcard$Any wc)))
-                   :any
+                   :xml/hiccup
                    (every-sequence? (atom #{}) x)
                    (if (:sequence context)
                      (transduce
@@ -419,7 +419,7 @@
       "choice" (cond
                  (and (= 1 (count fields))
                       (instance? XSWildcard$Any (first fields)))
-                 :any
+                 :xml/hiccup
                  :default
                  (into [(if (:sequence context)
                           :alt
@@ -444,7 +444,7 @@
       "all" (cond
               (and (= 1 (count fields))
                    (instance? XSWildcard$Any (first fields)))
-              :any
+              :xml/hiccup
               (every-sequence? (atom #{}) x)
               (transduce
                (keep (handle-fields-wrapper2 context))
@@ -459,7 +459,7 @@
     (-seq-ref x context)))
 
 (defn handle-wildcard [^XSWildcard x]
-  [:any])
+  [:xml/hiccup])
 
 (defn complex-attrs-map [^XSComplexType x {default-ns :default-ns :as context}]
   (let [annotations (some-> (.getAnnotation x false)
@@ -630,7 +630,7 @@
         "union"
         (let []
           (throw (ex-info "union is not supported yet" {}))
-          [:any {:name (.getName x)}]
+          [:xml/hiccup {:name (.getName x)}]
           #_(if (identical? ct x)
               (do (prn (.getName x) (.getDeclaredFacets x)) #_(pp/pprint (bean x)))
               [:sequence {:primitive true}

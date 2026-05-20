@@ -3,15 +3,19 @@
             [malli.core :as m]
             [clojure.xml :as xml]
             [io.pedestal.log :as log]
-            [malli.util :as mu])
+            [malli.util :as mu]
+            [clojure.string :as str]
+            [clojure.set])
   (:import
    (java.io InputStream Reader StringReader)
    (java.time.temporal ChronoField)
    (javax.xml.stream
     XMLInputFactory XMLStreamReader XMLStreamConstants)
    (clojure.lang IReduceInit MapEntry ITransientCollection)
-   (java.time LocalDate LocalDateTime OffsetDateTime ZonedDateTime LocalTime)
+   (java.time LocalDate LocalDateTime OffsetDateTime ZonedDateTime LocalTime
+              Duration Period Year YearMonth MonthDay Month)
    (java.time.format DateTimeFormatter DateTimeFormatterBuilder DateTimeParseException)
+   java.nio.ByteBuffer
    (java.nio.file Files Path)))
 
 (set! *warn-on-reflection* true)
@@ -297,6 +301,82 @@
       ;(safe-exit-tag r)
       (Boolean/parseBoolean txt))))
 
+(defn decode-base64 [^String s]
+  (.decode (java.util.Base64/getMimeDecoder) s))
+
+(defn decode-hex [^String s]
+  (let [len (count s)
+        data (make-array Byte/TYPE (quot len 2))]
+    (dotimes [i (quot len 2)]
+      (aset-byte data i
+                 (unchecked-byte
+                  (Integer/parseInt (subs s (* i 2) (+ (* i 2) 2)) 16))))
+    data))
+
+(defn read-hiccup [^XMLStreamReader r]
+  (let [tag (get-tag-kw r)
+        attr-count (.getAttributeCount r)
+        attrs (into {} (for [i (range attr-count)]
+                         [(keyword (.getAttributeLocalName r i)) (.getAttributeValue r i)]))
+        children (loop [child-list []]
+                   (if (.hasNext r)
+                     (let [event (.next r)]
+                       (case event
+                         1 ; START_ELEMENT
+                         (recur (conj child-list (read-hiccup r)))
+                         2 ; END_ELEMENT
+                         child-list
+                         (4 12) ; CHARACTERS, CDATA
+                         (let [text (.getText r)]
+                           (recur (if (str/blank? text)
+                                    child-list
+                                    (conj child-list text))))
+                         ; default
+                         (recur child-list)))
+                     child-list))]
+    (if (seq attrs)
+      (into [tag attrs] children)
+      (into [tag] children))))
+
+(defn hiccup-parser [x]
+  (fn [^XMLStreamReader r]
+    (read-hiccup r)))
+
+(defn base64-binary-parser [x]
+  (fn [^XMLStreamReader r]
+    (ByteBuffer/wrap (decode-base64 (.getElementText r)))))
+
+(defn hex-binary-parser [x]
+  (fn [^XMLStreamReader r]
+    (ByteBuffer/wrap (decode-hex (.getElementText r)))))
+
+(defn duration-parser [x]
+  (fn [^XMLStreamReader r]
+    (Duration/parse (.getElementText r))))
+
+(defn period-parser [x]
+  (fn [^XMLStreamReader r]
+    (Period/parse (.getElementText r))))
+
+(defn year-parser [x]
+  (fn [^XMLStreamReader r]
+    (Year/parse (.getElementText r))))
+
+(defn year-month-parser [x]
+  (fn [^XMLStreamReader r]
+    (YearMonth/parse (.getElementText r))))
+
+(defn month-day-parser [x]
+  (fn [^XMLStreamReader r]
+    (MonthDay/parse (.getElementText r))))
+
+(defn month-parser [x]
+  (fn [^XMLStreamReader r]
+    (let [s (.getElementText r)
+          m (re-find #"\d{2}" s)
+          val (Integer/parseInt m)]
+      (Month/of val))))
+
 (defn attribute-reducible
   ""
   [^XMLStreamReader r]
@@ -537,7 +617,9 @@
     (:? :*  :+  :repeat :sequential) (make-tag-discriminator (-single-sub-item x))
     :map (-map-discriminator x)
     :merge  (-alt-discriminator x)
-    (:string :time/offset-date-time :time/local-date :time/local-date-time :enum :re :decimal :double) nil #_(do #{allways-true-discriminator})
+    :xml/hiccup (constantly true)
+    (:string :time/offset-date-time :time/local-date :time/local-date-time :enum :re :decimal :double
+             :xml/base64Binary :xml/hexBinary :time/duration :time/period :time/year :time/year-month :time/month-day :time/month) nil
     ;:any (string-parser x)
     :tuple (-tuple-discriminator x)
     :alt  (-alt-discriminator x)
@@ -617,7 +699,8 @@
         ;_ (log/info children)
         parsers (into {} (map
                           (fn [[k props v]]
-                            [k (-xml-parser v)])) children)]
+                            [k (-xml-parser v)]))
+                      children)]
     (fn [^XMLStreamReader r]
       (let [tagk (get-tag-kw r)]
         (when-some [parser (parsers tagk)]
@@ -878,6 +961,15 @@
     :int (decimal-parser x)
     :double (decimal-parser x)
     :any (string-parser x)
+    :xml/hiccup (hiccup-parser x)
+    :xml/base64Binary (base64-binary-parser x)
+    :xml/hexBinary (hex-binary-parser x)
+    :time/duration (duration-parser x)
+    :time/period (period-parser x)
+    :time/year (year-parser x)
+    :time/year-month (year-month-parser x)
+    :time/month-day (month-day-parser x)
+    :time/month (month-parser x)
     :tuple (-tuple-parser x)
     :alt  (-alt-parser x)
     :or  (-or-parser x)

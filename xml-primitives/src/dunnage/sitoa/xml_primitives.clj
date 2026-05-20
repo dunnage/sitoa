@@ -21,7 +21,21 @@
                                        :pred          decimal?
                                        :type-properties
                                        {:decode/string -string->bigdec
-                                        :encode/string mt/-any->string}})})
+                                        :encode/string mt/-any->string}})
+   :xml/hiccup      (m/-simple-schema {:type          :xml/hiccup,
+                                       :pred          vector?})
+   :xml/base64Binary (m/-simple-schema {:type          :xml/base64Binary,
+                                        :pred          #(instance? java.nio.ByteBuffer %)})
+   :xml/hexBinary    (m/-simple-schema {:type          :xml/hexBinary,
+                                        :pred          #(instance? java.nio.ByteBuffer %)})
+   :time/year       (m/-simple-schema {:type          :time/year,
+                                       :pred          #(instance? java.time.Year %)})
+   :time/year-month (m/-simple-schema {:type          :time/year-month,
+                                       :pred          #(instance? java.time.YearMonth %)})
+   :time/month-day  (m/-simple-schema {:type          :time/month-day,
+                                       :pred          #(instance? java.time.MonthDay %)})
+   :time/month      (m/-simple-schema {:type          :time/month,
+                                       :pred          #(instance? java.time.Month %)})})
 
 (def external-registry {:registry (merge
                                    (m/default-schemas)
@@ -36,19 +50,19 @@
    :org.w3.www.2001.XMLSchema/decimal            :decimal
    :org.w3.www.2001.XMLSchema/anyURI,            :string
    :org.w3.www.2001.XMLSchema/boolean            :boolean ;(do (onlywhitespacefacet x) [:boolean {}]) ;"boolean, java.lang.Boolean"
-   :org.w3.www.2001.XMLSchema/base64Binary       :any ;(m/-simple-schema {:type :bytes, :pred bytes?}) ;byte[]
-   :org.w3.www.2001.XMLSchema/hexBinary          :any ;(m/-simple-schema {:type :bytes, :pred bytes?}) ;byte[]
+   :org.w3.www.2001.XMLSchema/base64Binary       :xml/base64Binary
+   :org.w3.www.2001.XMLSchema/hexBinary          :xml/hexBinary
    :org.w3.www.2001.XMLSchema/date,              :time/local-date ;javax.xml.datatype.XMLGregorianCalendar
    :org.w3.www.2001.XMLSchema/dateTime,          :time/offset-date-time ;javax.xml.datatype.XMLGregorianCalendar
    :org.w3.www.2001.XMLSchema/time,              :time/local-time ;javax.xml.datatype.XMLGregorianCalendar
-   :org.w3.www.2001.XMLSchema/duration           :any ;javax.xml.datatype.Duration
-   :org.w3.www.2001.XMLSchema/dayTimeDuration    :any ;javax.xml.datatype.Duration
-   :org.w3.www.2001.XMLSchema/yearMonthDuration  :any ;javax.xml.datatype.Duration
-   :org.w3.www.2001.XMLSchema/gDay,              :any ;javax.xml.datatype.XMLGregorianCalendar
-   :org.w3.www.2001.XMLSchema/gMonth,            :any ;javax.xml.datatype.XMLGregorianCalendar
-   :org.w3.www.2001.XMLSchema/gMonthDay,         :any ;javax.xml.datatype.XMLGregorianCalendar
-   :org.w3.www.2001.XMLSchema/gYear,             :any ;javax.xml.datatype.XMLGregorianCalendar
-   :org.w3.www.2001.XMLSchema/gYearMonth,        :any ;javax.xml.datatype.XMLGregorianCalendar
+   :org.w3.www.2001.XMLSchema/duration           :xml/hiccup ;no appropriate java.time class
+   :org.w3.www.2001.XMLSchema/dayTimeDuration    :time/duration
+   :org.w3.www.2001.XMLSchema/yearMonthDuration  :time/period
+   :org.w3.www.2001.XMLSchema/gDay,              :xml/hiccup ;no appropriate java.time class
+   :org.w3.www.2001.XMLSchema/gMonth,            :time/month
+   :org.w3.www.2001.XMLSchema/gMonthDay,         :time/month-day
+   :org.w3.www.2001.XMLSchema/gYear,             :time/year
+   :org.w3.www.2001.XMLSchema/gYearMonth,        :time/year-month
    :org.w3.www.2001.XMLSchema/integer            :int ;!!!!java.math.BigInteger
    :org.w3.www.2001.XMLSchema/nonPositiveInteger :int ;!!!!java.math.BigInteger
    :org.w3.www.2001.XMLSchema/negativeInteger    :int ;!!!!java.math.BigInteger
