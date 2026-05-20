@@ -174,25 +174,23 @@
   (io/reader s))
 
 #_(case tok
-  1                                             :START_ELEMENT
-  2                                             :END_ELEMENT
-  3                                             :PROCESSING_INSTRUCTION
-  4                                             :CHARACTERS
-  5                                             :COMMENT
-  6                                             :SPACE
-  7                                             :START_DOCUMENT
-  8                                             :END_DOCUMENT
-  9                                             :ENTITY_REFERENCE
-  10                                            :ATTRIBUTE
-  11                                            :DTD
-  12                                            :CDATA
-  13                                            :NAMESPACE
-  14                                            :NOTATION_DECLARATION
-  15                                            :ENTITY_DECLARATION
-  )
+    1                                             :START_ELEMENT
+    2                                             :END_ELEMENT
+    3                                             :PROCESSING_INSTRUCTION
+    4                                             :CHARACTERS
+    5                                             :COMMENT
+    6                                             :SPACE
+    7                                             :START_DOCUMENT
+    8                                             :END_DOCUMENT
+    9                                             :ENTITY_REFERENCE
+    10                                            :ATTRIBUTE
+    11                                            :DTD
+    12                                            :CDATA
+    13                                            :NAMESPACE
+    14                                            :NOTATION_DECLARATION
+    15                                            :ENTITY_DECLARATION)
 
 (declare -xml-parser make-tag-discriminator -sequential-parser)
-
 
 (defn skip-closing-and-charactors [^XMLStreamReader r]
   (loop [tok (.getEventType r)]
@@ -301,7 +299,7 @@
   (fn [^XMLStreamReader r]
     (let [txt (.getElementText r)]
       ;(safe-exit-tag r)
-       (Boolean/parseBoolean txt))))
+      (Boolean/parseBoolean txt))))
 
 (defn decode-base64 [^String s]
   (.decode (java.util.Base64/getMimeDecoder) s))
@@ -411,30 +409,30 @@
 
 (defn sequence-map-parser [^XMLStreamReader r tag-parsers tags m]
   (transduce
-    (map identity)
-    (fn
-      ([acc] (if (instance? ITransientCollection acc)
-               (persistent! acc)
-               acc))
-      ([acc [nexttagk tag-parser tag-descrim]]
-       (loop [tok (.getEventType r) val acc]
+   (map identity)
+   (fn
+     ([acc] (if (instance? ITransientCollection acc)
+              (persistent! acc)
+              acc))
+     ([acc [nexttagk tag-parser tag-descrim]]
+      (loop [tok (.getEventType r) val acc]
          ; (log/info :map (debug-element r) tags)
-         (case tok
-           1                                                ;START_ELEMENT
-           (let [tagk (get-tag-kw r)]
+        (case tok
+          1                                                ;START_ELEMENT
+          (let [tagk (get-tag-kw r)]
              ;(prn :sequence-map-parser tagk nexttagk)
-             (if (= nexttagk tagk)
-               (let [_ (assert (not (get val tagk)))
-                     val (assoc! val tagk (tag-parser r))]
+            (if (= nexttagk tagk)
+              (let [_ (assert (not (get val tagk)))
+                    val (assoc! val tagk (tag-parser r))]
                  ;(prn :parsed tagk)
-                 val
+                val
                  ;(recur (.getEventType r) val)
-                 )
-               (do (log/info :leave-start-next tagk :nexttagk nexttagk)
-                   val)))
-           2 (do
+                )
+              (do (log/info :leave-start-next tagk :nexttagk nexttagk)
+                  val)))
+          2 (do
                ;(assert (= (get-tag-kw r) nexttagk) (debug-element r))
-               (reduced val))
+              (reduced val))
 
            ;2                                                ;END_ELEMENT
            ;(let [tagk (get-tag-kw r)]
@@ -442,13 +440,12 @@
            ;    (recur (.next r) val)
            ;    (do (log/info :leave tagk)
            ;        val)))
-           (3 4 5 6)                                        ;COMMENT
-           (recur (.next r) val)
-           (7 8) (assert false)                             ;START_DOCUMENT
-           ))))
-          m
-          tag-parsers)
-  )
+          (3 4 5 6)                                        ;COMMENT
+          (recur (.next r) val)
+          (7 8) (assert false)                             ;START_DOCUMENT
+          ))))
+   m
+   tag-parsers))
 
 (defn wrap-next-before-tag [parser]
   (fn [^XMLStreamReader r]
@@ -469,58 +466,56 @@
   (let [children (-> x m/children)
         {:keys [xml/value-wrapped xml/in-seq-ex]} (m/properties x)
         attribute-parsers (transduce
-                            (filter (fn [[_ opts]] (-> opts :xml/attr)))
-                            (fn
-                              ([acc]acc)
-                              ([acc [attribute-name opts subschema]]
-                               (assoc acc attribute-name ap)))
-                            {}
-                            children)
+                           (filter (fn [[_ opts]] (-> opts :xml/attr)))
+                           (fn
+                             ([acc] acc)
+                             ([acc [attribute-name opts subschema]]
+                              (assoc acc attribute-name ap)))
+                           {}
+                           children)
         tag-parsers (transduce
-                      (remove (fn [[tag opts]]
-                                (or (-> opts :xml/attr)
-                                    (= tag :xml/value))))
-                      (fn ([acc]acc)
-                        ([acc [tag opts subschema]]
+                     (remove (fn [[tag opts]]
+                               (or (-> opts :xml/attr)
+                                   (= tag :xml/value))))
+                     (fn ([acc] acc)
+                       ([acc [tag opts subschema]]
                          ;(log/info (m/form (m/deref subschema)))
-                         (let [dsubschema (-> subschema m/deref-all)
-                               parser
-                               (case (m/form (m/deref dsubschema))
-                                 :org.w3.www.2001.XMLSchema/dateTime
-                                 (-xml-parser dsubschema)
-                                 (case (-> dsubschema m/type)
-                                   (:sequential) (-sequential-parser tag subschema)
-                                   (:alt :cat :or :multi) (->> (wrap-next-before-tag (-xml-parser subschema))
-                                                       (single-tag-parser tag ))
-                                   (single-tag-parser tag (-xml-parser subschema))))]
-                           (conj acc [tag
-                                      (if (:optional opts)
-                                        parser
-                                        (required-parser tag parser))
-                                      (case (-> dsubschema m/type)
-                                        (:alt :cat :or :sequential) (make-tag-discriminator dsubschema)
-                                        nil)]))))
-                      [] children)
-        valueparser (transduce
-                          (filter (fn [[tag]]
-                                    (= tag :xml/value)))
-                          (fn ([acc] acc)
-                            ([acc [tag opts subschema]]
-                             ;(log/info (m/form (m/deref subschema)))
-                             (let [dsubschema (-> subschema m/deref-all)
-                                   parser
-                                   (case (m/form (m/deref dsubschema))
-                                     :org.w3.www.2001.XMLSchema/dateTime
-                                     (-xml-parser dsubschema)
+                        (let [dsubschema (-> subschema m/deref-all)
+                              parser
+                              (case (m/form (m/deref dsubschema))
+                                :org.w3.www.2001.XMLSchema/dateTime
+                                (-xml-parser dsubschema)
+                                (case (-> dsubschema m/type)
+                                  (:sequential) (-sequential-parser tag subschema)
+                                  (:alt :cat :or :multi) (->> (wrap-next-before-tag (-xml-parser subschema))
+                                                              (single-tag-parser tag))
+                                  (single-tag-parser tag (-xml-parser subschema))))]
+                          (conj acc [tag
+                                     (if (:optional opts)
+                                       parser
+                                       (required-parser tag parser))
                                      (case (-> dsubschema m/type)
-                                       (:sequential) (-sequential-parser tag subschema)
-                                       (:alt :cat :or :multi) (wrap-next-before-tag (-xml-parser subschema))
-                                       (-xml-parser subschema)))]
-                               (required-parser tag parser))
-                             ))
-                          [] children)
-        tags        (into #{} (map first tag-parsers))
-        ]
+                                       (:alt :cat :or :sequential) (make-tag-discriminator dsubschema)
+                                       nil)]))))
+                     [] children)
+        valueparser (transduce
+                     (filter (fn [[tag]]
+                               (= tag :xml/value)))
+                     (fn ([acc] acc)
+                       ([acc [tag opts subschema]]
+                             ;(log/info (m/form (m/deref subschema)))
+                        (let [dsubschema (-> subschema m/deref-all)
+                              parser
+                              (case (m/form (m/deref dsubschema))
+                                :org.w3.www.2001.XMLSchema/dateTime
+                                (-xml-parser dsubschema)
+                                (case (-> dsubschema m/type)
+                                  (:sequential) (-sequential-parser tag subschema)
+                                  (:alt :cat :or :multi) (wrap-next-before-tag (-xml-parser subschema))
+                                  (-xml-parser subschema)))]
+                          (required-parser tag parser))))
+                     [] children)
+        tags        (into #{} (map first tag-parsers))]
     (fn [^XMLStreamReader r]
       (assert-not-close! r)
       (skip-characters r)
@@ -537,14 +532,13 @@
             ;_ (prn (debug-element r))
             ;_ (prn (.getAttributeCount r))
             val2 (reduce
-                   (fn [acc entry]
-                     (if-some [attr-parser (get attribute-parsers (key entry))]
-                       (conj! acc (attr-parser entry))
-                       (do (log/info :skip entry :attribute-parsers (keys attribute-parsers))
-                           acc)))
-                   (transient {})
-                   (attribute-reducible r))
-            ]
+                  (fn [acc entry]
+                    (if-some [attr-parser (get attribute-parsers (key entry))]
+                      (conj! acc (attr-parser entry))
+                      (do (log/info :skip entry :attribute-parsers (keys attribute-parsers))
+                          acc)))
+                  (transient {})
+                  (attribute-reducible r))]
 
         (if value-wrapped
           (let [                                            ;_ (prn :value-wrapped (debug-element r))
@@ -574,7 +568,7 @@
 (defn seqex-optional [x]
   (case (m/type x)
     :repeat (let [{:keys [min]} (m/properties x)]
-             (= min 0))
+              (= min 0))
     :? true
     :* true
     :+ true
@@ -586,20 +580,19 @@
         (comp (take-while-plus-1 (fn [item]
                                    (seqex-optional item)))
               (mapcat (fn [item]
-                     (make-tag-discriminator item))))
+                        (make-tag-discriminator item))))
         (-> x m/children)))
 
 (defn -alt-discriminator [x]
   (into #{}
         (comp (mapcat (fn [item]
-                     (make-tag-discriminator item))))
+                        (make-tag-discriminator item))))
         (-> x m/children)))
 (defn -multi-discriminator [x]
   (into #{}
         (map (fn [y]
                (first y)))
         (-> x m/children)))
-
 
 (defn special-tuple-tag [x]
   (let [children (-> x m/children)
@@ -658,22 +651,22 @@
                                                      true))) children)]
     (fn [^XMLStreamReader r]
       #_(assert (= (safe-next-tag r) 1) (pr-str (.getEventType r)
-                                         x))
+                                                x))
       (log/info :-alt-parser (.getLocalName r))
       (reduce
-        (fn [acc [discriminator parser wrap?]]
-          (let [tagk (get-tag-kw r)]
-            (log/info :alt tagk :discriminator discriminator :tag-discriminator (discriminator tagk))
-            (if (discriminator tagk)
-              (let [v (parser r)]
-                (log/info :type :alt :tagk tagk :v v :before-return (debug-element r))
+       (fn [acc [discriminator parser wrap?]]
+         (let [tagk (get-tag-kw r)]
+           (log/info :alt tagk :discriminator discriminator :tag-discriminator (discriminator tagk))
+           (if (discriminator tagk)
+             (let [v (parser r)]
+               (log/info :type :alt :tagk tagk :v v :before-return (debug-element r))
                 ;(skip-closing-and-charactors r)
-                (if wrap?
-                  (reduced [v])
-                  (reduced v)))
-              acc)))
-        nil
-        discriminator-parsers))))
+               (if wrap?
+                 (reduced [v])
+                 (reduced v)))
+             acc)))
+       nil
+       discriminator-parsers))))
 
 (defn -or-parser [x]
   (let [children (-> x m/children)
@@ -688,25 +681,25 @@
                                                 x))
       (log/info :type :-or-parser :local (.getLocalName r) :debug (debug-element r))
       (reduce
-        (fn [acc [discriminator parser]]
-          (let [tagk (get-tag-kw r)]
-            (log/info :or tagk discriminator (discriminator tagk))
-            (if (discriminator tagk)
-              (let [v (parser r)]
-                (log/info :type :or :tagk tagk :v v :before-return (debug-element r))
+       (fn [acc [discriminator parser]]
+         (let [tagk (get-tag-kw r)]
+           (log/info :or tagk discriminator (discriminator tagk))
+           (if (discriminator tagk)
+             (let [v (parser r)]
+               (log/info :type :or :tagk tagk :v v :before-return (debug-element r))
                 ;(skip-closing-and-charactors r)
                 ;((exit-tag tagk) r)
-                (reduced v))
-              acc)))
-        nil
-        discriminator-parsers))))
+               (reduced v))
+             acc)))
+       nil
+       discriminator-parsers))))
 
 (defn -multi-parser [x]
   (let [children (-> x m/children)
         ;_ (log/info children)
         parsers (into {} (map
-                           (fn [[k props v]]
-                             [k (-xml-parser v)]))
+                          (fn [[k props v]]
+                            [k (-xml-parser v)]))
                       children)]
     (fn [^XMLStreamReader r]
       (let [tagk (get-tag-kw r)]
@@ -716,7 +709,6 @@
             ;(skip-closing-and-charactors r)
             ;((exit-tag tagk) r)
             v))))))
-
 
 (defn -maybe-parser [x]
   (let [children (-> x m/children)
@@ -731,58 +723,57 @@
                                                 x))
       (log/info :type :-or-parser :local (.getLocalName r) :debug (debug-element r))
       (reduce
-        (fn [acc [discriminator parser]]
-          (let [tagk (get-tag-kw r)]
-            (log/info :type :or :tagk tagk :discriminator discriminator :discriminatork (discriminator tagk))
-            (if (discriminator tagk)
-              (let [v (parser r)]
-                (log/info :type :or :tagk tagk :v v :before-return (debug-element r))
+       (fn [acc [discriminator parser]]
+         (let [tagk (get-tag-kw r)]
+           (log/info :type :or :tagk tagk :discriminator discriminator :discriminatork (discriminator tagk))
+           (if (discriminator tagk)
+             (let [v (parser r)]
+               (log/info :type :or :tagk tagk :v v :before-return (debug-element r))
                 ;(skip-closing-and-charactors r)
-                (reduced v))
-              acc)))
-        nil
-        discriminator-parsers))))
+               (reduced v))
+             acc)))
+       nil
+       discriminator-parsers))))
 
 (defn -and-parser [x]
   (let [children (-> x m/children)]
     (-xml-parser (first children))))
 
-
 (defn -cat-parser [x]
   (let [children (-> x m/children)
         discriminator-parsers (into []
                                     (map (juxt
-                                           make-tag-discriminator
-                                           #(case (-> % m/deref-all m/type)
-                                              (:alt :cat :? :+ :repeat :*) [true (-xml-parser %)]
+                                          make-tag-discriminator
+                                          #(case (-> % m/deref-all m/type)
+                                             (:alt :cat :? :+ :repeat :*) [true (-xml-parser %)]
                                               ;(:ref) (do (log/info :ref)
                                               ;           [true (-xml-parser %)])
                                               ;(:or) [false (wrap-next-after-tag (-xml-parser %))]
                                               ; (:tuple) (wrap-next-before-tag (-xml-parser %))
-                                              [false (-xml-parser %)])
-                                           #_(log/info (-> % m/deref-all m/children first m/type))))
+                                             [false (-xml-parser %)])
+                                          #_(log/info (-> % m/deref-all m/children first m/type))))
                                     children)]
     (fn [^XMLStreamReader r]
       ;(assert (= (safe-next-tag r) 1))
 
       (reduce
-        (fn [acc [discriminator [inline-data? parser]]]
+       (fn [acc [discriminator [inline-data? parser]]]
           ;(log/info :cat :pre (debug-element r))
-          (skip-characters r)
-          (let [tagk (get-tag-kw r)]
-            (log/info :cat tagk discriminator inline-data? (discriminator tagk) (debug-element r))
-            (if (discriminator tagk)
-              (let [v (parser r)]
-                (log/info :catv v :before-return (debug-element r))
+         (skip-characters r)
+         (let [tagk (get-tag-kw r)]
+           (log/info :cat tagk discriminator inline-data? (discriminator tagk) (debug-element r))
+           (if (discriminator tagk)
+             (let [v (parser r)]
+               (log/info :catv v :before-return (debug-element r))
                 ;(skip-closing-and-charactors r)
                 ;(safe-next-tag r)
                 ;(log/info :catv :return(debug-element r))
-                (if inline-data?
-                  (into acc v)
-                  (conj acc v)))
-              acc)))
-        []
-        discriminator-parsers))))
+               (if inline-data?
+                 (into acc v)
+                 (conj acc v)))
+             acc)))
+       []
+       discriminator-parsers))))
 
 (defn -tuple-parser [x]
   (let [[enum sub :as tuple-children] (m/children x)
@@ -827,7 +818,7 @@
         sub-parser (case (-> child m/deref-all m/type)
                      (:alt :cat :or) (wrap-next-before-tag (-xml-parser child))
                      (:tuple) (-xml-parser child)
-                     #_(:map ) (single-tag-parser sequence-tag (-xml-parser child))
+                     #_(:map) (single-tag-parser sequence-tag (-xml-parser child))
                      #_(-xml-parser child))]
     (fn [^XMLStreamReader r]
       (assert-not-close! r)
@@ -844,7 +835,6 @@
                 (recur (.getEventType r) (conj! acc v)))
               (not-empty (persistent! acc))))
           (not-empty (persistent! acc)))))))
-
 
 (defn -regex-parser [x]
   (let [children (m/children x)
@@ -874,7 +864,7 @@
                            (reduce conj! acc v)
                            (conj! acc v))))
                 (do                                         ;(prn :exit-regex (debug-element r))
-                    (not-empty (persistent! acc)))))
+                  (not-empty (persistent! acc)))))
           (do
             (skip-characters r)
             (if (= (.getEventType r) 1)
@@ -889,7 +879,7 @@
     (assert (= (.getEventType r) 7))
     (.next r)
     (let [x (ensure-open-tag r)
-          _ (assert (= x 1 ) (pr-str x))
+          _ (assert (= x 1) (pr-str x))
           result (parser r)]
       ;(prn :end (debug-element r))
       (assert (= (.getEventType r) 8))
@@ -921,22 +911,21 @@
                              (into #{} (m/children acc))
                              (into #{} (m/children item)))))))))
 
-       ))))
 (defn simplify [schema]
   (case (m/type schema)
     :and
     (->> schema
          m/children
          (transduce
-           (map
-             (fn [x]
-               (cond
-                 (keyword? x)
-                 (m/deref-all x)
-                 (m/schema? x)
-                 (-> x m/deref simplify)
-                 :default x)))
-           simplify-reduce))
+          (map
+           (fn [x]
+             (cond
+               (keyword? x)
+               (m/deref-all x)
+               (m/schema? x)
+               (-> x m/deref simplify)
+               :default x)))
+          simplify-reduce))
 
     :malli.core/schema (recur (m/deref schema))
     (:enum :re :string) schema))
@@ -1023,7 +1012,6 @@
        (get-first-tag (toplevel-wrapper ?schema (-xml-parser (m/schema ?schema options))))))
 
    #_(m/-cached (m/schema ?schema options) :xml-parser -xml-parser)))
-
 
 (comment
   (def offset-patterns ["2007-12-03T10:15:30+01:00",

@@ -24,11 +24,11 @@
   (let [fac (XMLOutputFactory/newInstance)]
     (do                                                     ;IndentingXMLStreamWriter.
       (cond->
-        (cond
-          (instance? Writer source) (.createXMLStreamWriter fac ^Writer source)
-          (instance? OutputStream source) (.createXMLStreamWriter fac ^OutputStream source)
-          :else (throw (IllegalArgumentException.
-                         "source should be java.io.Reader or java.io.OutputStream")))
+       (cond
+         (instance? Writer source) (.createXMLStreamWriter fac ^Writer source)
+         (instance? OutputStream source) (.createXMLStreamWriter fac ^OutputStream source)
+         :else (throw (IllegalArgumentException.
+                       "source should be java.io.Reader or java.io.OutputStream")))
         (:indent props)
         (-> (IndentingXMLStreamWriter.)
             (doto (.setIndentStep "    ")))))))
@@ -39,7 +39,6 @@
 (defn nothing-handler [^XMLStreamWriter r stop state]
   state)
 (declare -xml-unparser -xml-discriminator)
-
 
 (defn seqex? [x]
   (case (m/type x)
@@ -62,9 +61,8 @@
     :alt (every? seqex-optional? (m/children x))
     :cat (every? seqex-optional? (m/children x))
     :map (and                                               ;(-> x m/properties :xml/in-seq-ex boolean)
-           (every? (comp :optional second) (m/children x)))
+          (every? (comp :optional second) (m/children x)))
     false))
-
 
 #_(defn single-top-unparser [elements-unparsers]
     (make-loop {:start-element
@@ -167,16 +165,16 @@
         f
         (fn [data pos]
           (or (xforms/some
-                (keep (fn [[discriminator seqex? optional? sch]]
-                        (let [disc (discriminator data pos)]
-                          (log/info :type :-alt-discriminator
-                                    :tag [disc pos]
-                                    :sch sch
+               (keep (fn [[discriminator seqex? optional? sch]]
+                       (let [disc (discriminator data pos)]
+                         (log/info :type :-alt-discriminator
+                                   :tag [disc pos]
+                                   :sch sch
                                     ; :data data
-                                    )
-                          (if (> disc pos)
-                            disc))))
-                sub-discriminators)
+                                   )
+                         (if (> disc pos)
+                           disc))))
+               sub-discriminators)
               pos))]
     (if in-regex?
       f
@@ -190,16 +188,16 @@
         f
         (fn [data pos]
           (or (xforms/some
-                (keep (fn [[discriminator seqex? optional? sch]]
-                        (let [disc (discriminator data pos)]
-                          (log/info :type :-alt-discriminator
-                                    :tag [disc pos]
-                                    :sch sch
+               (keep (fn [[discriminator seqex? optional? sch]]
+                       (let [disc (discriminator data pos)]
+                         (log/info :type :-alt-discriminator
+                                   :tag [disc pos]
+                                   :sch sch
                                     ; :data data
-                                    )
-                          (if (> disc pos)
-                            disc))))
-                sub-discriminators)
+                                   )
+                         (if (> disc pos)
+                           disc))))
+               sub-discriminators)
               pos))]
     (if in-regex?
       f
@@ -209,8 +207,8 @@
   (let [children (m/children x)
         dispatch (-> x m/properties :dispatch)
         tags (into #{}
-                                 (map first)
-                                 children)
+                   (map first)
+                   children)
         f
         (fn [data] (and (vector? data) (tags (dispatch data))))]
     (if in-regex?
@@ -230,7 +228,7 @@
         (log/info :type :-tuple-discriminator :vector (vector? data)
                   :data data :pos pos
                   :result (f (nth data (or pos 0)))
-                    :tag tag)
+                  :tag tag)
 
         (if (f (nth data (or pos 0)))
           (inc pos)
@@ -305,7 +303,7 @@
                       {:schema x
                        :sub-schem child}))
       #_(fn [data pos]
-        (sub-discriminator (first data) nil))
+          (sub-discriminator (first data) nil))
       (fn [data]
         (sub-discriminator (first data))))))
 
@@ -313,25 +311,25 @@
   (let [children (m/children x)
         {:keys [xml/value-wrapped xml/in-seq-ex]} (m/properties x)
         required-attrs (transduce
-                         (remove (fn [[_ opts]] (-> opts :optional)))
-                         (fn
-                           ([acc] acc)
-                           ([acc [attribute-name opts subschema]]
-                            (conj acc attribute-name)))
-                         []
-                         children)]
+                        (remove (fn [[_ opts]] (-> opts :optional)))
+                        (fn
+                          ([acc] acc)
+                          ([acc [attribute-name opts subschema]]
+                           (conj acc attribute-name)))
+                        []
+                        children)]
     (if in-regex?
       (fn [data pos]
         #_(log/info :data data :pos pos)
         (if (< pos (count data))
           (let [item (nth data pos)
                 has-required (reduce
-                               (fn [acc attr]
-                                 (if (contains? item attr)
-                                   true
-                                   (reduced false)))
-                               false
-                               required-attrs)]
+                              (fn [acc attr]
+                                (if (contains? item attr)
+                                  true
+                                  (reduced false)))
+                              false
+                              required-attrs)]
             (log/info :type :map-seq :map? (map? item)
                       :r
                       has-required
@@ -345,12 +343,12 @@
       (do (assert (not in-seq-ex))
           (fn [data]
             (reduce
-              (fn [acc attr]
-                (if (contains? data attr)
-                  true
-                  (reduced false)))
-              false
-              required-attrs))))))
+             (fn [acc attr]
+               (if (contains? data attr)
+                 true
+                 (reduced false)))
+             false
+             required-attrs))))))
 
 (defn ensure-discriminator-ref [x in-regex?]
   (assert *discriminator-refs*)
@@ -624,30 +622,30 @@
   (let [children (m/children x)
         {:keys [xml/value-wrapped xml/in-seq-ex]} (m/properties x)
         attribute-writers (transduce
-                            (filter (fn [[_ opts]] (-> opts :xml/attr)))
-                            (fn
-                              ([acc] acc)
-                              ([acc [attribute-name opts subschema]]
-                               (conj acc [attribute-name (-xml-unparser (m/deref subschema) false)])))
-                            []
-                            children)
+                           (filter (fn [[_ opts]] (-> opts :xml/attr)))
+                           (fn
+                             ([acc] acc)
+                             ([acc [attribute-name opts subschema]]
+                              (conj acc [attribute-name (-xml-unparser (m/deref subschema) false)])))
+                           []
+                           children)
         tag-writers (transduce
-                      (remove (fn [[_ opts]] (-> opts :xml/attr)))
-                      (fn ([acc] acc)
-                        ([acc [tag opts subschema]]
-                         #_(log/info :form (m/form (m/deref subschema)))
-                         (conj acc (case (-> subschema m/type)
-                                     :sequential
-                                     (let [subsubschema (m/children subschema)]
-                                       (assert (= 1 (count subsubschema)))
-                                       [tag
-                                        (-xml-unparser (first subsubschema) false)
-                                        true])
-                                     [tag
-                                      (-xml-unparser subschema false)
-                                      false]))))
-                      []
-                      children)]
+                     (remove (fn [[_ opts]] (-> opts :xml/attr)))
+                     (fn ([acc] acc)
+                       ([acc [tag opts subschema]]
+                        #_(log/info :form (m/form (m/deref subschema)))
+                        (conj acc (case (-> subschema m/type)
+                                    :sequential
+                                    (let [subsubschema (m/children subschema)]
+                                      (assert (= 1 (count subsubschema)))
+                                      [tag
+                                       (-xml-unparser (first subsubschema) false)
+                                       true])
+                                    [tag
+                                     (-xml-unparser subschema false)
+                                     false]))))
+                     []
+                     children)]
     (if in-regex?
       (do (assert in-seq-ex)
           (fn [data pos ^XMLStreamWriter w]
@@ -674,12 +672,12 @@
               attribute-writers)
         (if value-wrapped
           (let [[k valuewriter] (transduce
-                                  (comp (filter #(= :xml/value (nth % 0)))
-                                        (halt-when some?))
-                                  (fn ([acc] acc)
-                                    ([acc nv] nv))
-                                  nil
-                                  tag-writers)
+                                 (comp (filter #(= :xml/value (nth % 0)))
+                                       (halt-when some?))
+                                 (fn ([acc] acc)
+                                   ([acc nv] nv))
+                                 nil
+                                 tag-writers)
                 value (:xml/value data)]
             (valuewriter value w))
           (run! (fn [[key subwriter seq?]]
@@ -799,12 +797,12 @@
   (let [children (m/children x)
         sub-unparser
         (or (reduce
-              (fn [acc subschema]
-                (case (m/type subschema)
-                  (:string :enum :re) (reduced (-xml-unparser subschema in-regex?))
-                  acc))
-              nil
-              children)
+             (fn [acc subschema]
+               (case (m/type subschema)
+                 (:string :enum :re) (reduced (-xml-unparser subschema in-regex?))
+                 acc))
+             nil
+             children)
             ;dereference types
             )]
     (assert sub-unparser (pr-str x))
@@ -927,12 +925,12 @@
 
 (defn resolve-val-delays [x]
   (reduce-kv
-    (fn [acc k v]
-      (when-not (realized? v)
-        (deref v))
-      nil)
-    nil
-    x))
+   (fn [acc k v]
+     (when-not (realized? v)
+       (deref v))
+     nil)
+   nil
+   x))
 (defn fixed-point [x f]
   (loop [last-x @x]
     (do (f last-x)
