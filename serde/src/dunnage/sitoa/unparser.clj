@@ -10,7 +10,8 @@
     (javax.xml.stream
       XMLOutputFactory XMLStreamWriter XMLStreamConstants)
     (com.sun.xml.txw2.output IndentingXMLStreamWriter)
-    (java.time OffsetDateTime LocalDateTime LocalDate)))
+    (java.time OffsetDateTime LocalDateTime LocalDate)
+    (java.time.format DateTimeFormatter)))
 
 (set! *warn-on-reflection* true)
 (def full-string-transformer (transform/transformer transform/string-transformer mett/time-transformer))
@@ -566,10 +567,10 @@
 (defn offset-datetime-unparser [x in-regex?]
   (if in-regex?
     (fn [^OffsetDateTime data pos ^XMLStreamWriter w]
-      (.writeCharacters w (str (.toInstant data)))
+      (.writeCharacters w (.format data DateTimeFormatter/ISO_OFFSET_DATE_TIME))
       (inc pos))
     (fn [^OffsetDateTime data ^XMLStreamWriter w]
-      (.writeCharacters w (str (.toInstant data)))
+      (.writeCharacters w (.format data DateTimeFormatter/ISO_OFFSET_DATE_TIME))
       true))
   )
 (defn -alt-unparser [x in-regex?]
