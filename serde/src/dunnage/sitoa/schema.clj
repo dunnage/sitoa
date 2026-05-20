@@ -13,13 +13,11 @@
         (string? data)
         (.validate validator (StreamSource. (StringReader. data)))))))
 
-
 (comment
 
-  (def schemafactory (SchemaFactory/newDefaultInstance) )
+  (def schemafactory (SchemaFactory/newDefaultInstance))
   (def schema  (.newSchema schemafactory (io/resource "NCPDP_20170715/transport.xsd")))
 
   (def validator (.newValidator schema))
 
-  (.validate validator (StreamSource. (StringReader. )))
-  )
+  (.validate validator (StreamSource. (StringReader.))))

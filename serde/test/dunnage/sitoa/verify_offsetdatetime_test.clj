@@ -16,7 +16,7 @@
 (defn- tiny [body-type]
   (m/schema [:schema {:registry {:test/Root [:map {:closed true} [:val {} body-type]]}
                       :topElement "Root"}
-              :test/Root]
+             :test/Root]
             xml-primitives/external-registry))
 
 (defn- round-trip [schema data]
