@@ -160,28 +160,6 @@
   (or (.isLocal ty)
       (not (some-> (.getName ty) not-empty-string))))
 
-(defn handle-fields-wrapper [{default-ns :default-ns :as context}]
-  (fn [^XSParticle in]
-    (let [term (.getTerm in)
-          min-occurs (long (.getMinOccurs in))
-          max-occurs (long (.getMaxOccurs in))
-          x (.asElementDecl term)
-          ty (.getType x)
-          ty-ref (if (anon-type? ty)
-                   (-mtype ty context)
-                   (-seq-ref ty context))]
-      (assert x)
-      (when (not= max-occurs 0) #_(not= (m/children ty-ref) [(keyword default-ns "Extension")])
-            [(->kw x)
-             (cond-> {}
-               (= 0 min-occurs)
-               (assoc :optional true))
-             (if (or (> max-occurs 1) (= max-occurs -1))
-               [:sequential (if (= 0 min-occurs)
-                              {:min 1}
-                              {:min min-occurs})
-                ty-ref]
-               ty-ref)]))))
 
 (defn simplify-fields [props]
   (fn ([] [:map (assoc props :x :x)])
@@ -250,9 +228,11 @@
                        docs
                        (assoc :documentation (first docs)))
                      (if value-sequence?
-                       [:sequential (if (= 0 min-occurs)
-                                      {:min 1}
-                                      {:min min-occurs})
+                       [:sequential (cond-> (if (= 0 min-occurs)
+                                              {:min 1}
+                                              {:min min-occurs})
+                                      (not= max-occurs -1)
+                                      (assoc :max max-occurs))
                         ty-ref]
                        ty-ref)]))
                 (when-some [x (.asModelGroup term)]
@@ -309,9 +289,6 @@
                  (-mtype ty (dissoc context :sequence))
                  (-seq-ref ty (dissoc context :sequence)))]
     [:tuple {} [:enum (->kw x)] ty-ref]))
-
-(defn element-decl? [^XSParticle x]
-  (some-> x .getTerm .asElementDecl))
 
 (declare every-sequence?)
 (defn particle-sequence? [map-keys ^XSParticle x]
