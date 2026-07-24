@@ -66,3 +66,41 @@
         in2 {:val [:val [:SomeTag {:attr1 "val1"} [:ChildTag "text"]]]}]
     (is (= in1 (round-trip (tiny :xml/hiccup) in1)))
     (is (= in2 (round-trip (tiny :xml/hiccup) in2)))))
+
+(defn- value-wrapped-mixed []
+  (m/schema
+   [:schema {:registry
+             {:test/Root
+              [:map {:closed true}
+               [:addr {}
+                [:map {:closed true :xml/value-wrapped true}
+                 [:use {:xml/attr true :optional true} :string]
+                 [:xml/value :xml/hiccup]]]]}
+             :topElement "Root"}
+    :test/Root]
+   xml-primitives/external-registry))
+
+(deftest value-wrapped-hiccup-omits-outer-tag-and-attrs
+  "Mixed value-wrapped :xml/hiccup must not repeat the parent element tag/attrs
+  inside :xml/value — only content children (and text)."
+  (let [schema (value-wrapped-mixed)
+        in {:addr {:use "HP"
+                   :xml/value [[:streetAddressLine "1000 Hospital Lane"]
+                               [:city "Ann Arbor"]
+                               [:state "MI"]
+                               [:postalCode "99999"]
+                               [:country "US"]]}}
+        xml ((unparser/xml-string-unparser schema) in)
+        p (parser/xml-parser schema)
+        out (with-open [r ^XMLStreamReader (parser/make-stream-reader {} (StringReader. xml))]
+              (p r))]
+    (is (re-find #"use=\"HP\"" xml))
+    (is (= 1 (count (re-seq #"use=\"HP\"" xml)))
+        "attribute must appear once on wire, not duplicated from hiccup")
+    (is (not (re-find #"<addr[^>]*>\s*<addr" xml))
+        "outer addr tag must not reappear inside content")
+    (is (= in out))
+    ;; Content children only — no [:addr ...] wrapper.
+    (is (vector? (get-in out [:addr :xml/value])))
+    (is (not= :addr (first (get-in out [:addr :xml/value]))))
+    (is (= :streetAddressLine (ffirst (get-in out [:addr :xml/value]))))))

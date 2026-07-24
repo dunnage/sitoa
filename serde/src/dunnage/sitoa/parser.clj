@@ -371,37 +371,60 @@
                   (Integer/parseInt (subs s (* i 2) (+ (* i 2) 2)) 16))))
     data))
 
-(defn read-hiccup [^XMLStreamReader r]
+(declare read-hiccup)
+
+(defn- read-hiccup-children
+  "Collect mixed-content children until END_ELEMENT. Leaves the reader on
+  that END_ELEMENT. Nested elements are full hiccup nodes via read-hiccup."
+  [^XMLStreamReader r]
+  (loop [child-list []]
+    (if (.hasNext r)
+      (let [event (.next r)]
+        (case event
+          1 ; START_ELEMENT
+          (recur (conj child-list (read-hiccup r)))
+          2 ; END_ELEMENT
+          child-list
+          (4 12) ; CHARACTERS, CDATA
+          ;; Keep significant whitespace (newlines between words).
+          ;; Drop only fully blank text nodes; consecutive text is
+          ;; merged on reparse — canonical-l1 merges for equality.
+          (let [text (.getText r)]
+            (recur (if (str/blank? text)
+                     child-list
+                     (conj child-list text))))
+          ; default
+          (recur child-list)))
+      child-list)))
+
+(defn read-hiccup
+  "Read a full element as hiccup: [tag attrs? & children]. Call when the
+  reader is on START_ELEMENT."
+  [^XMLStreamReader r]
   (let [tag (get-tag-kw r)
         attr-count (.getAttributeCount r)
         attrs (into {} (for [i (range attr-count)]
                          [(keyword (.getAttributeLocalName r i)) (.getAttributeValue r i)]))
-        children (loop [child-list []]
-                   (if (.hasNext r)
-                     (let [event (.next r)]
-                       (case event
-                         1 ; START_ELEMENT
-                         (recur (conj child-list (read-hiccup r)))
-                         2 ; END_ELEMENT
-                         child-list
-                         (4 12) ; CHARACTERS, CDATA
-                         ;; Keep significant whitespace (newlines between words).
-                         ;; Drop only fully blank text nodes; consecutive text is
-                         ;; merged on reparse — canonical-l1 merges for equality.
-                         (let [text (.getText r)]
-                           (recur (if (str/blank? text)
-                                    child-list
-                                    (conj child-list text))))
-                         ; default
-                         (recur child-list)))
-                     child-list))]
+        children (read-hiccup-children r)]
     (if (seq attrs)
       (into [tag attrs] children)
       (into [tag] children))))
 
+(defn read-hiccup-content
+  "Read only the mixed-content children of the current element (no outer
+  tag/attrs). Call when the reader is on START_ELEMENT of a value-wrapped
+  parent; leaves the reader on the matching END_ELEMENT. Attributes and the
+  element name already live on the parent map."
+  [^XMLStreamReader r]
+  (read-hiccup-children r))
+
 (defn hiccup-parser [x]
   (fn [^XMLStreamReader r]
     (read-hiccup r)))
+
+(defn hiccup-content-parser [x]
+  (fn [^XMLStreamReader r]
+    (read-hiccup-content r)))
 
 (defn base64-binary-parser [x]
   (fn [^XMLStreamReader r]
@@ -574,20 +597,24 @@
                     (and (= :repeat dsub-type)
                          (let [props (m/properties dsubschema)]
                            (or (nil? (:min props)) (zero? (:min props))))))
-                ;; :xml/hiccup reads from the open start tag (includes tag name).
+                ;; Value-wrapped :xml/hiccup: parent map already holds tag + attrs.
+                ;; Parse content children only so they are not repeated in :xml/value.
                 ;; Element seqex (:or/:cat/…) and optional wrappers must first
                 ;; advance into the element body (or treat empty/self-closing as nil).
                 hiccup-value? (= :xml/hiccup (m/form dsubschema))
                 body-parser
-                (case (m/form (m/deref dsubschema))
-                  :org.w3.www.2001.XMLSchema/dateTime
-                  (-xml-parser dsubschema)
-                  (case dsub-type
-                    (:sequential) (-sequential-parser tag subschema)
-                    (:alt :cat :or :multi) (-xml-parser subschema)
-                    (-xml-parser subschema)))
+                (if hiccup-value?
+                  (hiccup-content-parser subschema)
+                  (case (m/form (m/deref dsubschema))
+                    :org.w3.www.2001.XMLSchema/dateTime
+                    (-xml-parser dsubschema)
+                    (case dsub-type
+                      (:sequential) (-sequential-parser tag subschema)
+                      (:alt :cat :or :multi) (-xml-parser subschema)
+                      (-xml-parser subschema))))
                 ;; Advance into element body. Self-closing and <tag></tag> yield
                 ;; END_ELEMENT immediately → empty body (attrs-only instance).
+                ;; Hiccup content parser starts from open START and consumes to END.
                 parser
                 (if hiccup-value?
                   body-parser

@@ -147,8 +147,10 @@
       (if (and (< pos (count data)) (or (vector? (nth data pos)) (string? (nth data pos))))
         (inc pos)
         pos))
+    ;; Content-only sequences (value-wrapped mixed) are sequential; full
+    ;; element hiccup is a vector; plain text is a string.
     (fn [data]
-      (or (vector? data) (string? data)))))
+      (or (sequential? data) (string? data)))))
 
 (defn byte-buffer-discriminator [x in-regex?]
   (if in-regex?
@@ -508,15 +510,20 @@
     (fn [data pos ^XMLStreamWriter w]
       (write-hiccup (nth data pos) w)
       (inc pos))
-    ;; Value-wrapped :xml/hiccup: parent map already opened the element and
-    ;; wrote attributes. Hiccup from the parser is [:tag attrs? & children]
-    ;; (or a content sequence / string) — only emit children/text here so
-    ;; attributes are not duplicated (e.g. addr use="HP" use="HP").
+    ;; Parent already opened the element (map child or value-wrapped).
+    ;; - Full element form [:tag attrs? & children]: apply attrs onto the open
+    ;;   start tag, then children (standalone :xml/hiccup element body).
+    ;; - Content sequence (value-wrapped mixed after content-only parse): emit
+    ;;   child nodes/text only — parent map owns tag + attributes.
     (fn [val ^XMLStreamWriter w]
       (cond
         (and (vector? val) (keyword? (first val)))
         (let [has-attrs? (map? (second val))
+              attrs (when has-attrs? (second val))
               children (if has-attrs? (nnext val) (next val))]
+          (when attrs
+            (doseq [[k v] attrs]
+              (.writeAttribute w (name k) (str v))))
           (doseq [child children]
             (write-hiccup child w)))
         (sequential? val)
