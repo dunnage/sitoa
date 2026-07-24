@@ -169,17 +169,30 @@
                 local-name)
               (recur (inc i)))))))))
 
-(defn- resolve-xsi-type-parser
+(def ^:private xsi-type-meta-key :dunnage.sitoa/xsi-type)
+
+(defn- resolve-xsi-type
   "If the current element has xsi:type and a matching registry parser exists,
-  return that parser; otherwise nil. Prefer v3.hl7-org (CDA) then sdtc.
+  return [type-kw parser]; otherwise nil. Prefer v3.hl7-org (CDA) then sdtc.
   `refparsers` is the atom captured at schema compile time (see ref-parser)."
   [^XMLStreamReader r refparsers]
   (when (and refparsers (not (false? refparsers)))
     (when-let [local (xsi-type-local-name r)]
-      (let [m @refparsers]
-        (or (get m (keyword "v3.hl7-org" local))
-            (get m (keyword "sdtc.hl7-org" local))
-            (get m (keyword local)))))))
+      (let [m @refparsers
+            candidates [(keyword "v3.hl7-org" local)
+                        (keyword "sdtc.hl7-org" local)
+                        (keyword local)]]
+        (some (fn [k]
+                (when-let [p (get m k)]
+                  [k p]))
+              candidates)))))
+
+(defn- with-xsi-type-meta
+  "Stamp resolved xsi:type on parse results so unparse can re-emit it."
+  [ret type-kw]
+  (if (and type-kw (instance? clojure.lang.IObj ret))
+    (vary-meta ret assoc xsi-type-meta-key type-kw)
+    ret))
 
 (defn single-tag-parser [tag parser]
   ;; Capture *ref-parsers* at compile time (same pattern as ref-parser): the
@@ -190,8 +203,9 @@
       (let [tagk (get-tag-kw r)]
         ;(prn :single-tag tag tagk)
         (when (= tag tagk)
-          (let [body-parser (or (resolve-xsi-type-parser r refparsers) parser)
-                ret (body-parser r)
+          (let [[xsi-kw xsi-parser] (or (resolve-xsi-type r refparsers) [nil nil])
+                body-parser (or xsi-parser parser)
+                ret (with-xsi-type-meta (body-parser r) xsi-kw)
                 ;_   (prn :single-tag-after tag (debug-element r))
                 exiter (exit-tag tag)]
             (exiter r)
@@ -371,6 +385,9 @@
                          2 ; END_ELEMENT
                          child-list
                          (4 12) ; CHARACTERS, CDATA
+                         ;; Keep significant whitespace (newlines between words).
+                         ;; Drop only fully blank text nodes; consecutive text is
+                         ;; merged on reparse — canonical-l1 merges for equality.
                          (let [text (.getText r)]
                            (recur (if (str/blank? text)
                                     child-list

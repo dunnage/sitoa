@@ -20,6 +20,39 @@
 (def ^:dynamic *discriminator-refs* nil)
 (def ^:dynamic *unparser-refs* nil)
 
+(def ^:private xsi-ns "http://www.w3.org/2001/XMLSchema-instance")
+(def ^:private xsi-type-meta-key :dunnage.sitoa/xsi-type)
+
+(defn- xsi-type-of
+  "Type keyword stamped by the parser when xsi:type selected a concrete type."
+  [data]
+  (when (instance? clojure.lang.IMeta data)
+    (get (meta data) xsi-type-meta-key)))
+
+(defn- lookup-type-unparser
+  "Resolve a registry type keyword to a non-regex unparser fn [data w]."
+  [type-kw]
+  (when (and type-kw *unparser-refs*)
+    (when-let [d (get @*unparser-refs* type-kw)]
+      (let [u (if (delay? d) @d d)]
+        ;; Unparsers are either (fn [data w]) or multi-arity; call with data+w.
+        u))))
+
+(defn- write-element-with-body
+  "Write start tag, optional xsi:type + typed body, else default body, end tag."
+  [^XMLStreamWriter w tag-name data default-writer]
+  (let [tag (if (keyword? tag-name) (name tag-name) (str tag-name))
+        type-kw (xsi-type-of data)]
+    (.writeStartElement w tag)
+    (when type-kw
+      ;; Prefer a real xsi:type so reparse hits the same concrete type.
+      (.writeNamespace w "xsi" xsi-ns)
+      (.writeAttribute w "xsi" xsi-ns "type" (name type-kw)))
+    (if-let [typed (when type-kw (lookup-type-unparser type-kw))]
+      (typed data w)
+      (default-writer data w))
+    (.writeEndElement w)))
+
 (defn make-stream-writer [props source]
   (let [fac (XMLOutputFactory/newInstance)]
     (do                                                     ;IndentingXMLStreamWriter.
@@ -382,11 +415,17 @@
     :malli.core/schema
     (-xml-discriminator (m/deref x) in-regex?)
     :ref (-ref-discriminator x in-regex?)
-    ;:merge (-xml-discriminator (m/deref x))
+    :merge (-xml-discriminator (m/deref x) in-regex?)
     :map (-map-discriminator x in-regex?)
     (:string :re :enum :any) (string-discriminator x in-regex?)
     :time/local-date-time (local-date-time-discriminator x in-regex?)
     :time/offset-date-time (zoned-dateTime-discriminator x in-regex?)
+    :time/local-date (string-discriminator x in-regex?)
+    :time/local-time (string-discriminator x in-regex?)
+    :decimal (string-discriminator x in-regex?)
+    :int (string-discriminator x in-regex?)
+    :double (string-discriminator x in-regex?)
+    :boolean (string-discriminator x in-regex?)
     :xml/hiccup (hiccup-discriminator x in-regex?)
     :xml/base64Binary (byte-buffer-discriminator x in-regex?)
     :xml/hexBinary (byte-buffer-discriminator x in-regex?)
@@ -396,21 +435,21 @@
     :time/year-month (year-month-discriminator x in-regex?)
     :time/month-day (month-day-discriminator x in-regex?)
     :time/month (month-discriminator x in-regex?)
-    ;:time/local-date (local-date-discriminator x)
-    ;:decimal (decimal-discriminator x)
     :tuple (-tuple-discriminator x in-regex?)
     :alt  (-alt-discriminator x in-regex?)
     :or  (-or-discriminator x in-regex?)
     :multi  (-multi-discriminator x in-regex?)
-    ;:and (-and-discriminator x)
+    :and (let [f (first (m/children x))]
+           (-xml-discriminator f in-regex?))
     :cat (-cat-discriminator x in-regex?)
     :sequential (-sequential-discriminator x in-regex?)
-    ;:boolean (boolean-discriminator x)
     :? (-regex-discriminator x in-regex?)
     :* (-regex-discriminator x in-regex?)
     :+ (-regex-discriminator x in-regex?)
     :repeat (-regex-discriminator x in-regex?)
-    ;:nil (fn [r]nil )
+    :nil (if in-regex?
+           (fn [data pos] pos)
+           (fn [data] false))
     ))
 
 (defn string-unparser [x in-regex?]
@@ -672,19 +711,15 @@
           (run! (fn [[key subwriter seq?]]
                   (if seq?
                     (doseq [subdata (get item-data key)]
-                      (.writeStartElement w (name key))
-                      (subwriter subdata w)
-                      (.writeEndElement w))
+                      (write-element-with-body w key subdata subwriter))
                     (when-some [subdata (get item-data key)]
-                      (.writeStartElement w (name key))
-                      (subwriter subdata w)
-                      (.writeEndElement w))))
+                      (write-element-with-body w key subdata subwriter))))
                 tag-writers))
         (inc pos))
       (fn [data ^XMLStreamWriter w]
         (run! (fn [[key subwriter]]
                 (when-some [subdata (get data key)]
-                  (.writeAttribute w (name key) subdata)
+                  (.writeAttribute w (name key) (str subdata))
                   ;(subwriter subdata w)
                   ))
               attribute-writers)
@@ -697,17 +732,14 @@
                                  nil
                                  tag-writers)
                 value (:xml/value data)]
-            (valuewriter value w))
+            (when (some? value)
+              (valuewriter value w)))
           (run! (fn [[key subwriter seq?]]
                   (if seq?
                     (doseq [subdata (get data key)]
-                      (.writeStartElement w (name key))
-                      (subwriter subdata w)
-                      (.writeEndElement w))
+                      (write-element-with-body w key subdata subwriter))
                     (when-some [subdata (get data key)]
-                      (.writeStartElement w (name key))
-                      (subwriter subdata w)
-                      (.writeEndElement w))))
+                      (write-element-with-body w key subdata subwriter))))
                 tag-writers))
         true))))
 
@@ -887,20 +919,15 @@
     :schema (let [{:keys [topElement]} (m/properties x)
                   p (-xml-unparser (m/deref x) in-regex?)]
               (if topElement
+                ;; Document root only: open top element, write body, close element.
+                ;; Writer lifecycle (start/end document, close) is owned by string-writer.
                 (fn [data pos ^XMLStreamWriter w]
                   (.writeStartElement w topElement)
-                  ;(.writeAttribute w "xmlns:xsd" "http://www.w3.org/2001/XMLSchema")
-                  ;(.writeAttribute w "xmlns:xsi" "http://www.w3.org/2001/XMLSchema-instance")
                   (let [result (p data w)]
                     (.writeEndElement w)
-                    (.close w)
                     result))
-                (fn [data pos ^XMLStreamWriter w]
-                  ;(.writeAttribute w "xmlns:xsd" "http://www.w3.org/2001/XMLSchema")
-                  ;(.writeAttribute w "xmlns:xsi" "http://www.w3.org/2001/XMLSchema-instance")
-                  (let [result (p data w)]
-                    (.close w)
-                    result))))
+                ;; Nested :schema (registry entries) — same arity as body unparser.
+                p))
     :malli.core/schema
     (-xml-unparser (m/deref x) in-regex?)
     :ref (-ref-unparser x in-regex?)
@@ -959,13 +986,41 @@
 
 (defn -xml-unparser- [x in-regex?]
   (let [discriminator-refs (atom {})
-        unparser-refs (atom {})]
+        unparser-refs (atom {})
+        schema (m/schema x)
+        props (m/properties schema)
+        ;; Pre-register every registry type (same idea as parser/*ref-parsers*)
+        ;; so xsi:type emission can look up PQ/IVL_TS/… even when the declared
+        ;; schema path never :ref'd that type (e.g. Observation.value → CD).
+        ;; Strip :topElement — that wrapper is only for the document root.
+        reg (or (:registry props) {})
+        reg-schema-props (dissoc props :topElement)]
     (binding [*discriminator-refs* discriminator-refs
               *unparser-refs* unparser-refs]
-      (let [up (-xml-unparser x in-regex?)]
+      (doseq [[k form] reg]
+        (swap! unparser-refs assoc k
+               (delay
+                 (-xml-unparser
+                  (m/schema [:schema reg-schema-props form])
+                  false))))
+      (let [up (-xml-unparser schema in-regex?)]
         (fixed-point unparser-refs resolve-val-delays)
         (fixed-point discriminator-refs resolve-val-delays)
-        up))))
+        ;; Re-bind ref tables on every write so xsi:type lookup sees them
+        ;; (dynamic bindings from this builder do not survive return).
+        (fn
+          ([data]
+           (binding [*discriminator-refs* discriminator-refs
+                     *unparser-refs* unparser-refs]
+             (up data)))
+          ([data w]
+           (binding [*discriminator-refs* discriminator-refs
+                     *unparser-refs* unparser-refs]
+             (up data w)))
+          ([data pos w]
+           (binding [*discriminator-refs* discriminator-refs
+                     *unparser-refs* unparser-refs]
+             (up data pos w))))))))
 
 (defn document-writer [f]
   (fn [data ^XMLStreamWriter w]
