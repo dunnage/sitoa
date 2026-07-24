@@ -257,6 +257,17 @@
 
                 (prn :fail (bean in)))))))
 
+(defn- mark-map-in-seq-ex
+  "Maps that appear as sequence items (under :? / :* / :+ / :repeat) are entered
+  at the first child start tag, not the parent. Flag :xml/in-seq-ex so the map
+  parser does not advance past that tag (fixes StrucDoc.Thead/Tbody tr rows)."
+  [msch]
+  (if (and (vector? msch) (= :map (first msch)))
+    (let [props (second msch)
+          props (if (map? props) props {})]
+      (assoc msch 1 (assoc props :xml/in-seq-ex true)))
+    msch))
+
 (defn wrap-regex [context ^XSParticle in msch]
   (let [min-occurs (.getMinOccurs in)
         max-occurs (.getMaxOccurs in)
@@ -269,11 +280,11 @@
       (:sequence context)
       (cond
         (and (not can-be-empty?) (not repeated?)) msch
-        (and can-be-empty? (not repeated?)) [:? msch]
-        (and (not can-be-empty?) repeated? unbounded?) [:+ msch]
-        (and can-be-empty? repeated? unbounded?) [:* msch]
+        (and can-be-empty? (not repeated?)) [:? (mark-map-in-seq-ex msch)]
+        (and (not can-be-empty?) repeated? unbounded?) [:+ (mark-map-in-seq-ex msch)]
+        (and can-be-empty? repeated? unbounded?) [:* (mark-map-in-seq-ex msch)]
         :else
-        [:repeat {:min min-occurs, :max max-occurs} msch])
+        [:repeat {:min min-occurs, :max max-occurs} (mark-map-in-seq-ex msch)])
       repeated?
       [:sequential msch]
       ;can-be-empty?
@@ -334,16 +345,20 @@
     (wrap-regex context in out)))
 
 (defn handle-toplevel-particle [context ^XSParticle in]
-  (let [t (.getTerm in)]
-    (assert (not (some-> (.asElementDecl t))))
-    ;(assert (not (.isRepeated x)) (pr-str (bean x)))
-    (or
-     (some->> (.asModelGroup t)
-              (handle-model-group context))
-     (some->> (.asModelGroupDecl t)
-              (handle-model-group-decl context))
-     (some-> (.asWildcard t)
-             handle-wildcard))))
+  "Convert a complex type's content particle, honoring min/maxOccurs.
+  Previously maxOccurs=unbounded choice (e.g. StrucDoc.Text) collapsed to a
+  single :or, so free-text-only or multi-child bodies could not parse."
+  (let [t (.getTerm in)
+        body (or
+              (some->> (.asModelGroup t)
+                       (handle-model-group context))
+              (some->> (.asModelGroupDecl t)
+                       (handle-model-group-decl context))
+              (some-> (.asWildcard t)
+                      handle-wildcard))]
+    (when body
+      ;; :sequence true so wrap-regex emits :? / :* / :+ instead of :sequential
+      (wrap-regex (assoc context :sequence true) in body))))
 
 (defn all-maps? [x]
   (transduce
@@ -398,11 +413,14 @@
                       (instance? XSWildcard$Any (first fields)))
                  :xml/hiccup
                  :default
+                 ;; :sequence true so multi-element sequence arms become maps
+                 ;; with :xml/in-seq-ex (entered at first child, e.g. IVL center+width).
                  (into [(if (:sequence context)
                           :alt
                           :or)]
                        (keep #(group-particle (assoc context
-                                                     :compositor "choice") %))
+                                                     :compositor "choice"
+                                                     :sequence true) %))
                        fields)
                  #_(let [part (reduce
                                (fn [acc nv] (group-particle-seq
@@ -483,6 +501,57 @@
   (when (vector? complex)
     (nth complex 0)))
 
+(defn- value-wrap
+  "Attrs map + :xml/value content under value-wrapped complex type."
+  [attr-map content]
+  (-> attr-map
+      (update 1 assoc :xml/value-wrapped true)
+      (conj [:xml/value {} content])))
+
+(defn- strip-regex-wrapper
+  "Unwrap :* / :? / :+ / :repeat to inspect the underlying content form."
+  [form]
+  (if (and (vector? form) (#{:* :? :+ :repeat} (first form)))
+    (last form)
+    form))
+
+(defn- element-choice-form?
+  "True when form is :or/:alt of element tuples (StrucDoc-style child choice)."
+  [form]
+  (let [form (strip-regex-wrapper form)]
+    (and (vector? form)
+         (#{:or :alt} (complex-tag form))
+         (let [children (if (map? (second form))
+                          (drop 2 form)
+                          (rest form))]
+           (and (seq children)
+                (every? (fn [child]
+                          (and (vector? child) (= :tuple (first child))))
+                        children))))))
+
+(defn- empty-struct-map?
+  "Empty closed map with no entries (ST-style empty complex content)."
+  [form]
+  (and (vector? form)
+       (= :map (first form))
+       (<= (count form) 2)))
+
+(defn- contains-form?
+  "True if form tree contains `needle` (by =)."
+  [form needle]
+  (or (= form needle)
+      (and (coll? form)
+           (not (map-entry? form))
+           (some #(contains-form? % needle) form))))
+
+(defn- ed-style-mixed?
+  "ED-like mixed: :cat with structured children plus :xml/hiccup tail.
+  Keep typed structure for reference/thumbnail rather than collapsing to hiccup."
+  [complex]
+  (and (vector? complex)
+       (= :cat (complex-tag complex))
+       (contains-form? complex :xml/hiccup)))
+
 (extend-protocol MalliXML
   XSComplexType
   (-mtype [x context]
@@ -498,9 +567,15 @@
                            .asParticle
                            (handle-toplevel-particle context))]
       (cond
-        (and attr-map simple) (-> attr-map
-                                  (update 1 assoc :xml/value-wrapped true)
-                                  (conj [:xml/value {} simple]))
+        (and attr-map simple)
+        (value-wrap attr-map simple)
+
+        ;; XSD mixed="true": character data + optional element children.
+        ;; Always capture as :xml/hiccup for fidelity (StrucDoc, EN/PN, ED free
+        ;; text, ADXP, …). Structured ED reference/thumbnail become hiccup nodes.
+        (and attr-map mixed?)
+        (value-wrap attr-map :xml/hiccup)
+
         (and attr-map complex)
         (case (complex-tag complex)
           :map
@@ -512,9 +587,8 @@
                  attr-map]
                 (drop 2)
                 complex)
-          (-> attr-map
-              (update 1 assoc :xml/value-wrapped true)
-              (conj [:xml/value {} complex])))
+          (value-wrap attr-map complex))
+
         (and attr-map (nil? complex)) attr-map
         simple simple
         complex complex

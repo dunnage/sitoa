@@ -124,8 +124,8 @@
     (let [tok (.getEventType r)]
       ;(log/info tok)
       (case tok
-        (1 8)                                             ;START_ELEMENT
-        (throw (ex-info (str "expected to exit " tag)  (debug-element r)))
+        (1 8)                                               ;START_ELEMENT / END_DOCUMENT
+        (throw (ex-info (str "expected to exit " tag) (debug-element r)))
         (2)
         (if (= tag (get-tag-kw r))
           (if (.hasNext r)
@@ -140,18 +140,62 @@
           (.next r)
           (recur r))))))
 
+(def ^:private xsi-ns "http://www.w3.org/2001/XMLSchema-instance")
+
+(defn- xsi-type-local-name
+  "Return the local type name from xsi:type on the current START_ELEMENT, or nil.
+  Accepts 'IVL_TS', 'hl7:IVL_TS', or Clark '{ns}Local' forms."
+  ^String [^XMLStreamReader r]
+  (when (= 1 (.getEventType r))
+    (let [cnt (.getAttributeCount r)]
+      (loop [i 0]
+        (when (< i cnt)
+          (let [local (.getAttributeLocalName r i)
+                ans (.getAttributeNamespace r i)]
+            (if (and (= "type" local)
+                     (or (= xsi-ns ans)
+                         ;; some producers omit the namespace URI on the attr
+                         (and (or (nil? ans) (.isEmpty ^String ans))
+                              (= "xsi" (.getAttributePrefix r i)))))
+              (let [raw (.getAttributeValue r i)
+                    ;; strip prefix: "hl7:IVL_TS" or "{uri}IVL_TS"
+                    local-name (cond
+                                 (str/starts-with? raw "{")
+                                 (let [idx (str/index-of raw "}")]
+                                   (if idx (subs raw (inc idx)) raw))
+                                 (str/includes? raw ":")
+                                 (second (str/split raw #":" 2))
+                                 :else raw)]
+                local-name)
+              (recur (inc i)))))))))
+
+(defn- resolve-xsi-type-parser
+  "If the current element has xsi:type and a matching registry parser exists,
+  return that parser; otherwise nil. Prefer v3.hl7-org (CDA) then sdtc.
+  `refparsers` is the atom captured at schema compile time (see ref-parser)."
+  [^XMLStreamReader r refparsers]
+  (when (and refparsers (not (false? refparsers)))
+    (when-let [local (xsi-type-local-name r)]
+      (let [m @refparsers]
+        (or (get m (keyword "v3.hl7-org" local))
+            (get m (keyword "sdtc.hl7-org" local))
+            (get m (keyword local)))))))
+
 (defn single-tag-parser [tag parser]
-  (fn [^XMLStreamReader r]
-    ;(prn :single-tag tag (debug-element r))
-    (let [tagk (get-tag-kw r)]
-      ;(prn :single-tag tag tagk)
-      (when (= tag tagk)
-        (let [is-empty? (.isEndElement r)
-              ret (parser r)
-              ;_   (prn :single-tag-after tag (debug-element r))
-              exiter (exit-tag tag)]
-          (exiter r)
-          ret)))))
+  ;; Capture *ref-parsers* at compile time (same pattern as ref-parser): the
+  ;; dynamic binding only exists while xml-parser builds the graph.
+  (let [refparsers *ref-parsers*]
+    (fn [^XMLStreamReader r]
+      ;(prn :single-tag tag (debug-element r))
+      (let [tagk (get-tag-kw r)]
+        ;(prn :single-tag tag tagk)
+        (when (= tag tagk)
+          (let [body-parser (or (resolve-xsi-type-parser r refparsers) parser)
+                ret (body-parser r)
+                ;_   (prn :single-tag-after tag (debug-element r))
+                exiter (exit-tag tag)]
+            (exiter r)
+            ret))))))
 
 (defn ensure-safe-next-tag [^XMLStreamReader r]
   (case (.getEventType r)
@@ -498,40 +542,52 @@
                                        (:alt :cat :or :sequential) (make-tag-discriminator dsubschema)
                                        nil)]))))
                      [] children)
-        valueparser (transduce
-                     (filter (fn [[tag]]
-                               (= tag :xml/value)))
-                     (fn ([acc] acc)
-                       ([acc [tag opts subschema]]
-                             ;(log/info (m/form (m/deref subschema)))
-                        (let [dsubschema (-> subschema m/deref-all)
-                              parser
-                              (case (m/form (m/deref dsubschema))
-                                :org.w3.www.2001.XMLSchema/dateTime
-                                (-xml-parser dsubschema)
-                                (case (-> dsubschema m/type)
-                                  (:sequential) (-sequential-parser tag subschema)
-                                  (:alt :cat :or :multi) (wrap-next-before-tag (-xml-parser subschema))
-                                  (-xml-parser subschema)))]
-                          (required-parser tag parser))))
-                     [] children)
-        tags        (into #{} (map first tag-parsers))]
+        value-child (some (fn [[tag :as entry]]
+                            (when (= tag :xml/value) entry))
+                          children)
+        valueparser
+        (when value-child
+          (let [[tag opts subschema] value-child
+                dsubschema (-> subschema m/deref-all)
+                dsub-type (m/type dsubschema)
+                ;; Optional when entry is :optional or content is empty-capable seqex
+                optional-value?
+                (or (:optional opts)
+                    (#{:? :*} dsub-type)
+                    (and (= :repeat dsub-type)
+                         (let [props (m/properties dsubschema)]
+                           (or (nil? (:min props)) (zero? (:min props))))))
+                ;; :xml/hiccup reads from the open start tag (includes tag name).
+                ;; Element seqex (:or/:cat/…) and optional wrappers must first
+                ;; advance into the element body (or treat empty/self-closing as nil).
+                hiccup-value? (= :xml/hiccup (m/form dsubschema))
+                body-parser
+                (case (m/form (m/deref dsubschema))
+                  :org.w3.www.2001.XMLSchema/dateTime
+                  (-xml-parser dsubschema)
+                  (case dsub-type
+                    (:sequential) (-sequential-parser tag subschema)
+                    (:alt :cat :or :multi) (-xml-parser subschema)
+                    (-xml-parser subschema)))
+                ;; Advance into element body. Self-closing and <tag></tag> yield
+                ;; END_ELEMENT immediately → empty body (attrs-only instance).
+                parser
+                (if hiccup-value?
+                  body-parser
+                  (fn [^XMLStreamReader rr]
+                    (let [tok (safe-next-tag rr)]
+                      (if (= tok 2)
+                        ::empty-body
+                        (body-parser rr)))))]
+            {:parser parser
+             :optional? optional-value?
+             :tag tag}))
+        tags (into #{} (map first tag-parsers))]
     (fn [^XMLStreamReader r]
       (assert-not-close! r)
       (skip-characters r)
       (assert-not-close! r)
-      ;(when (= (.getEventType r) 4)
-      ;  (safe-next-tag r))
-      ;(assert (= (.getEventType r) 1) (pr-str (.getEventType r)
-      ;                                   (.getText r)
-      ;                                   x))
-      ;(log/info :map (.getLocalName r))
-
-      (let [tagk (get-tag-kw r)
-            ;_ (prn :map :parsing tagk)
-            ;_ (prn (debug-element r))
-            ;_ (prn (.getAttributeCount r))
-            val2 (reduce
+      (let [val2 (reduce
                   (fn [acc entry]
                     (if-some [attr-parser (get attribute-parsers (key entry))]
                       (conj! acc (attr-parser entry))
@@ -539,20 +595,30 @@
                           acc)))
                   (transient {})
                   (attribute-reducible r))]
-
         (if value-wrapped
-          (let [                                            ;_ (prn :value-wrapped (debug-element r))
-                parsed-value (valueparser r)]
-            ;(ensure-safe-next-tag r)
-            #_(when-not in-seq-ex
-                (safe-next-tag r))
-            (persistent! (assoc! val2 :xml/value parsed-value)))
-          (do
-            (if in-seq-ex
-              (sequence-map-parser r tag-parsers tags val2)
-              (do
-                (safe-next-tag r)
-                (sequence-map-parser r tag-parsers tags val2)))))))))
+          (let [{:keys [parser optional? tag]} valueparser
+                parsed-value (parser r)]
+            (cond
+              (= parsed-value ::empty-body)
+              ;; Attrs-only (nullFlavor/value/unit) is valid for IVL_*/PQ/etc.
+              (persistent! val2)
+
+              (and (some? parsed-value)
+                   (not (and (sequential? parsed-value) (empty? parsed-value))))
+              (persistent! (assoc! val2 :xml/value parsed-value))
+
+              (or optional?
+                  (and (sequential? parsed-value) (empty? parsed-value)))
+              (persistent! val2)
+
+              :else
+              (throw (ex-info (str "required parser failed " tag " failed got ")
+                              (debug-element r)))))
+          (if in-seq-ex
+            (sequence-map-parser r tag-parsers tags val2)
+            (do
+              (safe-next-tag r)
+              (sequence-map-parser r tag-parsers tags val2))))))))
 
 (defn -map-discriminator [x]
   (into #{}
@@ -652,12 +718,12 @@
     (fn [^XMLStreamReader r]
       #_(assert (= (safe-next-tag r) 1) (pr-str (.getEventType r)
                                                 x))
-      (log/info :-alt-parser (.getLocalName r))
+      (log/info :type :-alt-parser :local (.getLocalName r))
       (reduce
        (fn [acc [discriminator parser wrap?]]
-         (let [tagk (get-tag-kw r)]
-           (log/info :alt tagk :discriminator discriminator :tag-discriminator (discriminator tagk))
-           (if (discriminator tagk)
+         (let [tagk (when (= 1 (.getEventType r)) (get-tag-kw r))]
+           (log/info :type :alt :tagk tagk :discriminator discriminator)
+           (if (and discriminator tagk (discriminator tagk))
              (let [v (parser r)]
                (log/info :type :alt :tagk tagk :v v :before-return (debug-element r))
                 ;(skip-closing-and-charactors r)
@@ -671,25 +737,32 @@
 (defn -or-parser [x]
   (let [children (-> x m/children)
         ;_ (log/info children)
+        ;; wrap? mirrors -alt-parser: seqex branches already return a vector of
+        ;; items (cat/alt/regex); atomics (tuple/map/string) are wrapped so a
+        ;; parent regex can conj them as a single slot.
         discriminator-parsers (into [] (map (juxt make-tag-discriminator
                                                   #(case (-> % m/deref-all m/type)
-                                                     ;(:alt :cat) (wrap-next-after-tag (-xml-parser %))
-                                                     ;(:tuple) (wrap-next-before-tag (-xml-parser %))
-                                                     (-xml-parser %)))) children)]
+                                                     (-xml-parser %))
+                                                  #(case (-> % m/deref-all m/type)
+                                                     (:alt :cat :? :+ :repeat :*) false
+                                                     true))) children)]
     (fn [^XMLStreamReader r]
       #_(assert (= (safe-next-tag r) 1) (pr-str (.getEventType r)
                                                 x))
-      (log/info :type :-or-parser :local (.getLocalName r) :debug (debug-element r))
+      (log/info :type :-or-parser :debug (debug-element r))
       (reduce
-       (fn [acc [discriminator parser]]
-         (let [tagk (get-tag-kw r)]
-           (log/info :or tagk discriminator (discriminator tagk))
-           (if (discriminator tagk)
+       (fn [acc [discriminator parser wrap?]]
+         (let [tagk (when (= 1 (.getEventType r)) (get-tag-kw r))]
+           (log/info :type :or :tagk tagk :discriminator discriminator)
+           ;; discriminator is nil for :string/:re/etc. — skip rather than NPE
+           (if (and discriminator tagk (discriminator tagk))
              (let [v (parser r)]
                (log/info :type :or :tagk tagk :v v :before-return (debug-element r))
                 ;(skip-closing-and-charactors r)
                 ;((exit-tag tagk) r)
-               (reduced v))
+               (if wrap?
+                 (reduced [v])
+                 (reduced v)))
              acc)))
        nil
        discriminator-parsers))))
@@ -721,14 +794,15 @@
     (fn [^XMLStreamReader r]
       #_(assert (= (safe-next-tag r) 1) (pr-str (.getEventType r)
                                                 x))
-      (log/info :type :-or-parser :local (.getLocalName r) :debug (debug-element r))
+      (log/info :type :-maybe-parser :local (.getLocalName r) :debug (debug-element r))
       (reduce
        (fn [acc [discriminator parser]]
-         (let [tagk (get-tag-kw r)]
-           (log/info :type :or :tagk tagk :discriminator discriminator :discriminatork (discriminator tagk))
-           (if (discriminator tagk)
+         (let [tagk (when (= 1 (.getEventType r)) (get-tag-kw r))]
+           (log/info :type :maybe :tagk tagk :discriminator discriminator)
+           ;; discriminator is nil for leaf types — skip rather than NPE
+           (if (and discriminator tagk (discriminator tagk))
              (let [v (parser r)]
-               (log/info :type :or :tagk tagk :v v :before-return (debug-element r))
+               (log/info :type :maybe :tagk tagk :v v :before-return (debug-element r))
                 ;(skip-closing-and-charactors r)
                (reduced v))
              acc)))
@@ -760,11 +834,12 @@
        (fn [acc [discriminator [inline-data? parser]]]
           ;(log/info :cat :pre (debug-element r))
          (skip-characters r)
-         (let [tagk (get-tag-kw r)]
-           (log/info :cat tagk discriminator inline-data? (discriminator tagk) (debug-element r))
-           (if (discriminator tagk)
+         (let [tagk (when (= 1 (.getEventType r)) (get-tag-kw r))]
+           (log/info :type :cat :tagk tagk :discriminator discriminator
+                     :inline-data? inline-data? :debug (debug-element r))
+           (if (and discriminator tagk (discriminator tagk))
              (let [v (parser r)]
-               (log/info :catv v :before-return (debug-element r))
+               (log/info :type :catv :v v :before-return (debug-element r))
                 ;(skip-closing-and-charactors r)
                 ;(safe-next-tag r)
                 ;(log/info :catv :return(debug-element r))
@@ -843,8 +918,10 @@
         sub-discriminator (make-tag-discriminator child)
         ;_ (log/info child (-> child m/deref-all m/type))
         ;_    (log/info (-> child m/deref-all m/type))
+        ;; :or is inline like :alt so cat branches flatten into the parent
+        ;; regex acc (IVL_TS low/high) instead of a nested single slot.
         inline?     (case (-> child m/deref-all m/type)
-                      (:alt :cat :? :+ :repeat :*) true
+                      (:alt :cat :or :? :+ :repeat :*) true
                       ;(:ref) (do (log/info :ref)
                       ;           true)
                       false)
@@ -854,11 +931,14 @@
       (loop [event-type (.getEventType r) acc (transient [])]
         (case event-type
           1 (let [tagk (get-tag-kw r)]
-              (log/info :type :-regex-parser-outer :tagk tagk :sub-discriminator sub-discriminator :child child :debug (debug-element r))
-              (if (sub-discriminator tagk)
+              (log/info :type :-regex-parser-outer :tagk tagk
+                        :sub-discriminator sub-discriminator :child child
+                        :debug (debug-element r))
+              (if (and sub-discriminator (sub-discriminator tagk))
                 (let [v (sub-parser r)]
                   ;(ensure-safe-next-tag r)
-                  (log/info :type :-regex-parser :tagk tagk :schema dereffed-child :debug (debug-element r) :v v)
+                  (log/info :type :-regex-parser :tagk tagk :schema dereffed-child
+                            :debug (debug-element r) :v v)
                   (recur (.getEventType r)
                          (if inline?
                            (reduce conj! acc v)
