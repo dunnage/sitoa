@@ -33,7 +33,8 @@
   "Resolve a registry type keyword to a non-regex unparser fn [data w]."
   [type-kw]
   (when (and type-kw *unparser-refs*)
-    (when-let [d (get @*unparser-refs* type-kw)]
+    ;; Cache is dual-mode: [kw in-regex?]. xsi:type always wants value-mode.
+    (when-let [d (get @*unparser-refs* [type-kw false])]
       (let [u (if (delay? d) @d d)]
         ;; Unparsers are either (fn [data w]) or multi-arity; call with data+w.
         u))))
@@ -211,11 +212,11 @@
           (or (xforms/some
                (keep (fn [[discriminator seqex? optional? sch]]
                        (let [disc (discriminator data pos)]
-                         (log/info :type :-alt-discriminator
-                                   :tag [disc pos]
-                                   :sch sch
+                         (log/debug :type :-alt-discriminator
+                                    :tag [disc pos]
+                                    :sch sch
                                     ; :data data
-                                   )
+                                    )
                          (if (> disc pos)
                            disc))))
                sub-discriminators)
@@ -234,11 +235,11 @@
           (or (xforms/some
                (keep (fn [[discriminator seqex? optional? sch]]
                        (let [disc (discriminator data pos)]
-                         (log/info :type :-alt-discriminator
-                                   :tag [disc pos]
-                                   :sch sch
+                         (log/debug :type :-or-discriminator
+                                    :tag [disc pos]
+                                    :sch sch
                                     ; :data data
-                                   )
+                                    )
                          (if (> disc pos)
                            disc))))
                sub-discriminators)
@@ -252,12 +253,18 @@
         dispatch (-> x m/properties :dispatch)
         tags (into #{}
                    (map first)
-                   children)
-        f
-        (fn [data] (and (vector? data) (tags (dispatch data))))]
+                   children)]
     (if in-regex?
-      f
-      (fn [data] (pos? (f data 0))))))
+      ;; Inspect the slot at pos; advance by 1 on match else stay.
+      (fn [data pos]
+        (if (and (< pos (count data))
+                 (let [item (nth data pos)]
+                   (and (vector? item) (tags (dispatch item)))))
+          (inc pos)
+          pos))
+      ;; Value-mode: whole data is the multi payload — do not call (f data 0).
+      (fn [data]
+        (and (vector? data) (tags (dispatch data)))))))
 
 (defn -tuple-discriminator [x in-regex?]
   (let [[enum] (m/children x)
@@ -269,10 +276,10 @@
         (fn [data] (and (vector? data) (= tag (nth data 0))))]
     (if in-regex?
       (fn [data pos]
-        (log/info :type :-tuple-discriminator :vector (vector? data)
-                  :data data :pos pos
-                  :result (f (nth data (or pos 0)))
-                  :tag tag)
+        (log/debug :type :-tuple-discriminator :vector (vector? data)
+                   :data data :pos pos
+                   :result (f (nth data (or pos 0)))
+                   :tag tag)
 
         (if (f (nth data (or pos 0)))
           (inc pos)
@@ -292,9 +299,9 @@
           (loop [pos (or ogpos 0)]
             (if (< pos (count data))
               (let [next-pos (discriminator data pos)]
-                (log/info :type :-regex-discriminator
-                          next-pos pos
-                          :sch sch)
+                (log/debug :type :-regex-discriminator
+                           next-pos pos
+                           :sch sch)
                 (if (> next-pos pos)
                   (recur next-pos)
                   pos))
@@ -311,12 +318,12 @@
               children)
         f
         (fn [data ogpos]
-          (log/info :type :cat-seq)
+          (log/debug :type :cat-seq)
           (loop [pos (or ogpos 0) sub-discriminators sub-discriminators]
             (if (< pos (count data))
               (if-some [[discriminator seqex? optional? sch] (first sub-discriminators)]
                 (let [next-pos (discriminator data pos)]
-                  (log/info :type :cat-seq :optional? optional? :descrim next-pos :item-data (nth data pos) :check sch)
+                  (log/debug :type :cat-seq :optional? optional? :descrim next-pos :item-data (nth data pos) :check sch)
                   (if (and next-pos (> next-pos pos))
                     (recur next-pos (rest sub-discriminators))
                     (if optional?
@@ -325,10 +332,10 @@
                         #_(throw (ex-info "missing-required" {:pos pos
                                                               :fn  (pr-str discriminator)}))
                         ogpos))))
-                (do (log/info :type :cat-seq
-                              :exhausted true
-                              :descrim pos
-                              :item-data (nth data pos))
+                (do (log/debug :type :cat-seq
+                               :exhausted true
+                               :descrim pos
+                               :item-data (nth data pos))
                     (assert in-regex? (nth data pos))
                     pos))
               pos)))]
@@ -354,34 +361,57 @@
 (defn -map-discriminator [x in-regex?]
   (let [children (m/children x)
         {:keys [xml/value-wrapped xml/in-seq-ex]} (m/properties x)
+        ;; Parser map disc uses non-attr element tags as the identity signal.
+        ;; Mirror that: required non-attr, non-:xml/value keys identify a map arm.
+        required-element-keys (transduce
+                               (comp (remove (fn [[_ opts]] (-> opts :xml/attr)))
+                                     (remove (fn [[k]] (= k :xml/value)))
+                                     (remove (fn [[_ opts]] (-> opts :optional))))
+                               (fn
+                                 ([acc] acc)
+                                 ([acc [attribute-name _opts _subschema]]
+                                  (conj acc attribute-name)))
+                               []
+                               children)
         required-attrs (transduce
-                        (remove (fn [[_ opts]] (-> opts :optional)))
+                        (comp (filter (fn [[_ opts]] (-> opts :xml/attr)))
+                              (remove (fn [[_ opts]] (-> opts :optional))))
                         (fn
                           ([acc] acc)
-                          ([acc [attribute-name opts subschema]]
+                          ([acc [attribute-name _opts _subschema]]
                            (conj acc attribute-name)))
                         []
-                        children)]
+                        children)
+        ;; Value-mode keeps prior semantics: all required keys (attrs + elements).
+        all-required (transduce
+                      (remove (fn [[_ opts]] (-> opts :optional)))
+                      (fn
+                        ([acc] acc)
+                        ([acc [attribute-name _opts _subschema]]
+                         (conj acc attribute-name)))
+                      []
+                      children)
+        has-all? (fn [item keys]
+                   (every? #(contains? item %) keys))]
     (if in-regex?
       (fn [data pos]
-        #_(log/info :data data :pos pos)
         (if (< pos (count data))
-          (let [item (nth data pos)
-                has-required (reduce
-                              (fn [acc attr]
-                                (if (contains? item attr)
-                                  true
-                                  (reduced false)))
-                              false
-                              required-attrs)]
-            (log/info :type :map-seq :map? (map? item)
-                      :r
-                      has-required
-                      :item-data item :check x)
+          (let [item (nth data pos)]
+            (log/debug :type :map-seq :map? (map? item)
+                       :required-elements required-element-keys
+                       :required-attrs required-attrs
+                       :item-data item :check x)
             (if (map? item)
-              (if has-required
-                (inc pos)
-                pos)
+              (if (seq required-element-keys)
+                ;; (a) has all required non-attr element keys
+                (if (has-all? item required-element-keys)
+                  (inc pos)
+                  pos)
+                ;; (b) no required element keys: map? + any required attrs
+                (if (or (empty? required-attrs)
+                        (has-all? item required-attrs))
+                  (inc pos)
+                  pos))
               pos))
           pos))
       (do (assert (not in-seq-ex))
@@ -392,23 +422,26 @@
                  true
                  (reduced false)))
              false
-             required-attrs))))))
+             all-required))))))
 
 (defn ensure-discriminator-ref [x in-regex?]
   (assert *discriminator-refs*)
   (let [children (m/children x)
         _ (assert (= 1 (count children)))
-        key (first children)]
-    (if-some [existing (get @*discriminator-refs* key)]
+        key (first children)
+        ;; Dual-mode cache: first in-regex? mode must not win forever.
+        cache-key [key in-regex?]]
+    (if-some [existing (get @*discriminator-refs* cache-key)]
       existing
       (let [d (delay (-xml-discriminator (m/deref x) in-regex?))]
-        (swap! *discriminator-refs* assoc key d)
+        (swap! *discriminator-refs* assoc cache-key d)
         d))))
 
 (defn -ref-discriminator [x in-regex?]
   (let [sub-discriminator (ensure-discriminator-ref x in-regex?)]
-    (fn [data]
-      (@sub-discriminator data))))
+    (if in-regex?
+      (fn [data pos] (@sub-discriminator data pos))
+      (fn [data] (@sub-discriminator data)))))
 
 (defn -xml-discriminator [x in-regex?]
   ;(prn (m/form x))
@@ -457,7 +490,8 @@
 (defn string-unparser [x in-regex?]
   (if in-regex?
     (fn [data pos ^XMLStreamWriter w]
-      (.writeCharacters w data)
+      (when (< pos (count data))
+        (.writeCharacters w (nth data pos)))
       (inc pos))
     (fn [data ^XMLStreamWriter w]
       (.writeCharacters w data)
@@ -466,10 +500,12 @@
 (defn boolean-unparser [x in-regex?]
   (if in-regex?
     (fn [data pos ^XMLStreamWriter w]
-      (cond
-        (true? data) (.writeCharacters w "true")
-        (false? data) (.writeCharacters w "false")
-        :else (throw (ex-info "not a valid bool" {:data data})))
+      (when (< pos (count data))
+        (let [v (nth data pos)]
+          (cond
+            (true? v) (.writeCharacters w "true")
+            (false? v) (.writeCharacters w "false")
+            :else (throw (ex-info "not a valid bool" {:data v})))))
       (inc pos))
     (fn [data ^XMLStreamWriter w]
       (cond
@@ -535,8 +571,10 @@
 
 (defn base64-binary-unparser [x in-regex?]
   (if in-regex?
-    (fn [^ByteBuffer data pos ^XMLStreamWriter w]
-      (.writeCharacters w (encode-base64 (.array data)))
+    (fn [data pos ^XMLStreamWriter w]
+      (when (< pos (count data))
+        (let [^ByteBuffer item (nth data pos)]
+          (.writeCharacters w (encode-base64 (.array item)))))
       (inc pos))
     (fn [^ByteBuffer data ^XMLStreamWriter w]
       (.writeCharacters w (encode-base64 (.array data)))
@@ -544,8 +582,10 @@
 
 (defn hex-binary-unparser [x in-regex?]
   (if in-regex?
-    (fn [^ByteBuffer data pos ^XMLStreamWriter w]
-      (.writeCharacters w (encode-hex (.array data)))
+    (fn [data pos ^XMLStreamWriter w]
+      (when (< pos (count data))
+        (let [^ByteBuffer item (nth data pos)]
+          (.writeCharacters w (encode-hex (.array item)))))
       (inc pos))
     (fn [^ByteBuffer data ^XMLStreamWriter w]
       (.writeCharacters w (encode-hex (.array data)))
@@ -553,8 +593,10 @@
 
 (defn duration-unparser [x in-regex?]
   (if in-regex?
-    (fn [^java.time.Duration data pos ^XMLStreamWriter w]
-      (.writeCharacters w (.toString data))
+    (fn [data pos ^XMLStreamWriter w]
+      (when (< pos (count data))
+        (let [^java.time.Duration item (nth data pos)]
+          (.writeCharacters w (.toString item))))
       (inc pos))
     (fn [^java.time.Duration data ^XMLStreamWriter w]
       (.writeCharacters w (.toString data))
@@ -562,8 +604,10 @@
 
 (defn period-unparser [x in-regex?]
   (if in-regex?
-    (fn [^java.time.Period data pos ^XMLStreamWriter w]
-      (.writeCharacters w (.toString data))
+    (fn [data pos ^XMLStreamWriter w]
+      (when (< pos (count data))
+        (let [^java.time.Period item (nth data pos)]
+          (.writeCharacters w (.toString item))))
       (inc pos))
     (fn [^java.time.Period data ^XMLStreamWriter w]
       (.writeCharacters w (.toString data))
@@ -571,8 +615,10 @@
 
 (defn year-unparser [x in-regex?]
   (if in-regex?
-    (fn [^java.time.Year data pos ^XMLStreamWriter w]
-      (.writeCharacters w (.toString data))
+    (fn [data pos ^XMLStreamWriter w]
+      (when (< pos (count data))
+        (let [^java.time.Year item (nth data pos)]
+          (.writeCharacters w (.toString item))))
       (inc pos))
     (fn [^java.time.Year data ^XMLStreamWriter w]
       (.writeCharacters w (.toString data))
@@ -580,8 +626,10 @@
 
 (defn year-month-unparser [x in-regex?]
   (if in-regex?
-    (fn [^java.time.YearMonth data pos ^XMLStreamWriter w]
-      (.writeCharacters w (.toString data))
+    (fn [data pos ^XMLStreamWriter w]
+      (when (< pos (count data))
+        (let [^java.time.YearMonth item (nth data pos)]
+          (.writeCharacters w (.toString item))))
       (inc pos))
     (fn [^java.time.YearMonth data ^XMLStreamWriter w]
       (.writeCharacters w (.toString data))
@@ -589,8 +637,10 @@
 
 (defn month-day-unparser [x in-regex?]
   (if in-regex?
-    (fn [^java.time.MonthDay data pos ^XMLStreamWriter w]
-      (.writeCharacters w (.toString data))
+    (fn [data pos ^XMLStreamWriter w]
+      (when (< pos (count data))
+        (let [^java.time.MonthDay item (nth data pos)]
+          (.writeCharacters w (.toString item))))
       (inc pos))
     (fn [^java.time.MonthDay data ^XMLStreamWriter w]
       (.writeCharacters w (.toString data))
@@ -598,8 +648,10 @@
 
 (defn month-unparser [x in-regex?]
   (if in-regex?
-    (fn [^java.time.Month data pos ^XMLStreamWriter w]
-      (.writeCharacters w (format "--%02d" (.getValue data)))
+    (fn [data pos ^XMLStreamWriter w]
+      (when (< pos (count data))
+        (let [^java.time.Month item (nth data pos)]
+          (.writeCharacters w (format "--%02d" (.getValue item)))))
       (inc pos))
     (fn [^java.time.Month data ^XMLStreamWriter w]
       (.writeCharacters w (format "--%02d" (.getValue data)))
@@ -622,7 +674,7 @@
         (fn [data pos ^XMLStreamWriter w]
           (reduce (fn [acc [discriminator unparser _seqex? _optional? sch]]
                     (let [progress (discriminator data pos)]
-                      (log/info :type :or :progress progress :pos pos :sch sch)
+                      (log/debug :type :or :progress progress :pos pos :sch sch)
                       (if (and progress (> progress pos))
                         (let [next-pos (unparser data pos w)]
                           (assert (and next-pos (> next-pos pos))
@@ -642,15 +694,17 @@
 (defn -multi-unparser [x in-regex?]
   (let [children (m/children x)
         dispatch (-> x m/properties :dispatch)
+        ;; Children are value-mode unparsers; regex multi passes the slot item.
         subparsers (into {}
                          (map (juxt first (comp #(-xml-unparser % false) #(nth % 2))))
                          children)]
     (if in-regex?
       (fn [data pos ^XMLStreamWriter w]
-        (let [k (dispatch data)]
+        (let [item (nth data pos)
+              k (dispatch item)]
           (when-some [sub-unparser (get subparsers k)]
-            (sub-unparser data nil w)
-            (reduced (inc pos)))))
+            (sub-unparser item w))
+          (inc pos)))
       (fn [data ^XMLStreamWriter w]
         (let [k (dispatch data)]
           (when-some [sub-unparser (get subparsers k)]
@@ -714,7 +768,7 @@
       ;; addressed by index; write element children of the map at that slot.
       (fn [data pos ^XMLStreamWriter w]
         (let [item-data (nth data pos)]
-          (log/info :type :map-unparse-in-regex :data data :pos pos)
+          (log/debug :type :map-unparse-in-regex :data data :pos pos)
           (run! (fn [[key subwriter seq?]]
                   (if seq?
                     (doseq [subdata (get item-data key)]
@@ -788,7 +842,8 @@
   (let [encoder (m/encoder x full-string-transformer)]
     (if in-regex?
       (fn [data pos ^XMLStreamWriter w]
-        (.writeCharacters w (encoder data))
+        (when (< pos (count data))
+          (.writeCharacters w (encoder (nth data pos))))
         (inc pos))
       (fn [data ^XMLStreamWriter w]
         (.writeCharacters w (encoder data))
@@ -796,8 +851,10 @@
 
 (defn offset-datetime-unparser [x in-regex?]
   (if in-regex?
-    (fn [^OffsetDateTime data pos ^XMLStreamWriter w]
-      (.writeCharacters w (.format data DateTimeFormatter/ISO_OFFSET_DATE_TIME))
+    (fn [data pos ^XMLStreamWriter w]
+      (when (< pos (count data))
+        (let [^OffsetDateTime item (nth data pos)]
+          (.writeCharacters w (.format item DateTimeFormatter/ISO_OFFSET_DATE_TIME))))
       (inc pos))
     (fn [^OffsetDateTime data ^XMLStreamWriter w]
       (.writeCharacters w (.format data DateTimeFormatter/ISO_OFFSET_DATE_TIME))
@@ -812,12 +869,12 @@
         (fn [data pos ^XMLStreamWriter w]
           (reduce (fn [acc [discriminator unparser seqex? ?optional sch]]
                     (let [progress (discriminator data pos)]
-                      (log/info :type :seq :progress progress :pos pos
-                                :data data  :sch sch)
+                      (log/debug :type :seq :progress progress :pos pos
+                                 :data data  :sch sch)
                       (if (> progress pos)
                         (let [x (unparser data pos w)]
                           (assert (> x pos) (pr-str pos sch data))
-                          (log/info :alt x)
+                          (log/debug :alt x)
                           (reduced x))
                         pos)))
                   pos
@@ -906,20 +963,25 @@
   (assert *unparser-refs*)
   (let [children (m/children x)
         _ (assert (= 1 (count children)))
-        key (first children)]
-    (if-some [existing (get @*unparser-refs* key)]
+        key (first children)
+        ;; Dual-mode cache: first in-regex? mode must not win forever.
+        cache-key [key in-regex?]]
+    (if-some [existing (get @*unparser-refs* cache-key)]
       existing
       (let [d (delay (-xml-unparser (m/deref x) in-regex?))]
-        (swap! *unparser-refs* assoc key d)
+        (swap! *unparser-refs* assoc cache-key d)
         d))))
 
 (defn -ref-unparser [x in-regex?]
   (let [sub-unparser (ensure-unparser-ref x in-regex?)]
-    (fn
-      ([data]
-       (@sub-unparser data))
-      ([data offset]
-       (@sub-unparser data offset)))))
+    (if in-regex?
+      (fn [data pos w]
+        (@sub-unparser data pos w))
+      (fn
+        ([data]
+         (@sub-unparser data))
+        ([data w]
+         (@sub-unparser data w))))))
 
 (defn -xml-unparser [x in-regex?]
   (case (m/type x)
@@ -1005,7 +1067,8 @@
     (binding [*discriminator-refs* discriminator-refs
               *unparser-refs* unparser-refs]
       (doseq [[k form] reg]
-        (swap! unparser-refs assoc k
+        ;; Dual-mode cache key [kw in-regex?]; pre-register value-mode for xsi:type.
+        (swap! unparser-refs assoc [k false]
                (delay
                  (-xml-unparser
                   (m/schema [:schema reg-schema-props form])
