@@ -30,3 +30,6 @@
 /target
 /dev-resources/Directory/
 /dev-resources/NCPDP_20170715/
+
+# Licensed NCPDP SCRIPT XSDs — do not commit
+/dev-resources/NCPDP_2023011/
