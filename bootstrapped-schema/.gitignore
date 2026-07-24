@@ -28,3 +28,6 @@
 /checkouts
 /classes
 /target
+
+# Licensed NCPDP SCRIPT XSDs — do not commit
+/dev-resources/NCPDP_2023011/
