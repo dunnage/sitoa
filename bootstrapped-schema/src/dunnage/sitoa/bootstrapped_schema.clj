@@ -346,8 +346,13 @@
 
 (defn handle-toplevel-particle [context ^XSParticle in]
   "Convert a complex type's content particle, honoring min/maxOccurs.
-  Previously maxOccurs=unbounded choice (e.g. StrucDoc.Text) collapsed to a
-  single :or, so free-text-only or multi-child bodies could not parse."
+
+  Occurrence wrappers follow dual-mode registry design:
+  - non-seq types (no :sequence in context) → bare / :sequential (no malli regex)
+  - *-seq types (:sequence true) → :? / :* / :+ / :repeat
+
+  Previously maxOccurs was ignored at the top particle, so unbounded choice
+  (e.g. StrucDoc.Text) collapsed to a single :or under *-seq forms."
   (let [t (.getTerm in)
         body (or
               (some->> (.asModelGroup t)
@@ -357,8 +362,7 @@
               (some-> (.asWildcard t)
                       handle-wildcard))]
     (when body
-      ;; :sequence true so wrap-regex emits :? / :* / :+ instead of :sequential
-      (wrap-regex (assoc context :sequence true) in body))))
+      (wrap-regex context in body))))
 
 (defn all-maps? [x]
   (transduce
@@ -413,14 +417,16 @@
                       (instance? XSWildcard$Any (first fields)))
                  :xml/hiccup
                  :default
-                 ;; :sequence true so multi-element sequence arms become maps
-                 ;; with :xml/in-seq-ex (entered at first child, e.g. IVL center+width).
+                 ;; Preserve parent :sequence. Only *-seq (sequence context) may
+                 ;; emit malli regex on arms; non-seq types stay :or of bare
+                 ;; tuples / :sequential. When :sequence is already true (seq
+                 ;; forms), multi-element sequence arms still get :xml/in-seq-ex
+                 ;; maps (e.g. IVL center+width).
                  (into [(if (:sequence context)
                           :alt
                           :or)]
                        (keep #(group-particle (assoc context
-                                                     :compositor "choice"
-                                                     :sequence true) %))
+                                                     :compositor "choice") %))
                        fields)
                  #_(let [part (reduce
                                (fn [acc nv] (group-particle-seq
