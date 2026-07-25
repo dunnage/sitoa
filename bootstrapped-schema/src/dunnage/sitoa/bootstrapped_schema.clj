@@ -666,34 +666,27 @@
             "date", prim-keyword                            ;javax.xml.datatype.XMLGregorianCalendar
             "dateTime", prim-keyword                        ;javax.xml.datatype.XMLGregorianCalendar
             "string", (malli-string-primitive x context)
-
-            #_#_nil (do                                         ;(prn (bean x))
-                      (-mtype base-type context))))
+            ;; User simple types / unhandled primitives (FOP length_Type, …)
+            (if base-type
+              (-mtype base-type context)
+              (or prim-keyword :string))))
         "list"
         (if-some [ltype (.asList x)]
           (let [it (.getItemType ltype)]
-            (do                                             ; (identical? ct x)
-              #_(do (throw (ex-info "empty" {}))            ;(prn (.getName x) (.getDeclaredFacets x)) #_(pp/pprint (bean x))
-                    :any)
-              (prn it)
-              [:sequence {:primitive true}
-               (if (anon-type? it)
-                 (-mtype it (dissoc context :sequence))
-                 (-seq-ref it (dissoc context :sequence)))]))
+            [:sequential
+             (if (anon-type? it)
+               (-mtype it (dissoc context :sequence))
+               (-seq-ref it (dissoc context :sequence)))])
           (case (get-primitive-type x)
-            "IDREFS" :string
-            "ENTITIES" :string
-            "NMTOKENS" :string))
+            ("IDREFS" "ENTITIES" "NMTOKENS") :string
+            ;; XSOM sometimes reports list variety without asList (FOP compounds)
+            :string))
         "union"
-        (let []
-          (throw (ex-info "union is not supported yet" {}))
-          [:xml/hiccup {:name (.getName x)}]
-          #_(if (identical? ct x)
-              (do (prn (.getName x) (.getDeclaredFacets x)) #_(pp/pprint (bean x)))
-              [:sequence {:primitive true}
-               (if (anon-type? ct)
-                 (-mtype ct (dissoc context :sequence))
-                 (-seq-ref ct (dissoc context :sequence)))])))))
+        ;; Prefer member expansion when available; otherwise open string.
+        (if (instance? XSUnionSimpleType x)
+          (-mtype ^XSUnionSimpleType x context)
+          (or (when base-type (-mtype base-type context))
+              :string)))))
   (-seq-possible? [x context]
     false)
   (-seq-ref [x context]
