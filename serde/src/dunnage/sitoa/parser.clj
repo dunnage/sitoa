@@ -599,9 +599,16 @@
                            (or (nil? (:min props)) (zero? (:min props))))))
                 ;; Value-wrapped :xml/hiccup: parent map already holds tag + attrs.
                 ;; Parse content children only so they are not repeated in :xml/value.
-                ;; Element seqex (:or/:cat/…) and optional wrappers must first
-                ;; advance into the element body (or treat empty/self-closing as nil).
                 hiccup-value? (= :xml/hiccup (m/form dsubschema))
+                ;; Element / seqex content (IVL_TS choice, cat of low/high, …) lives
+                ;; under child start tags. Leaf text (:string, :and of string, times)
+                ;; must be read with getElementText while still on the parent START
+                ;; — safe-next-tag skips CHARACTERS and would treat
+                ;; <To Qualifier="P">1655458</To> as empty.
+                element-body?
+                (boolean (#{:alt :cat :or :multi :sequential :map :tuple :merge
+                            :? :* :+ :repeat}
+                          dsub-type))
                 body-parser
                 (if hiccup-value?
                   (hiccup-content-parser subschema)
@@ -612,21 +619,23 @@
                       (:sequential) (-sequential-parser tag subschema)
                       (:alt :cat :or :multi) (-xml-parser subschema)
                       (-xml-parser subschema))))
-                ;; Advance into element body. Self-closing and <tag></tag> yield
-                ;; END_ELEMENT immediately → empty body (attrs-only instance).
-                ;; Hiccup content parser starts from open START and consumes to END.
+                ;; Element body: advance into first child, or ::empty-body for
+                ;; self-closing / attrs-only. Leaf / hiccup: stay on START.
                 parser
-                (if hiccup-value?
+                (cond
+                  hiccup-value?
                   body-parser
+                  element-body?
                   (fn [^XMLStreamReader rr]
                     (let [tok (safe-next-tag rr)]
                       (if (= tok 2)
                         ::empty-body
-                        (body-parser rr)))))]
+                        (body-parser rr))))
+                  :else
+                  body-parser)]
             {:parser parser
              :optional? optional-value?
-             :tag tag}))
-        tags (into #{} (map first tag-parsers))]
+             :tag tag}))        tags (into #{} (map first tag-parsers))]
     (fn [^XMLStreamReader r]
       (assert-not-close! r)
       (skip-characters r)
@@ -749,19 +758,18 @@
     :range (-single-sub-item x)))
 
 (defn -alt-parser [x]
+  "Sequence-context choice (bootstrapped-schema emits :alt when :sequence is true).
+  Atomic arms (tuple/map/string) are wrapped as [v] so a parent :cat / regex can
+  treat the choice as one slot (IVL_TS low/high, SCRIPT Instruction arms, …).
+  Seqex arms (cat/alt/regex) already return a vector and are not re-wrapped."
   (let [children (-> x m/children)
-        ;_ (log/info children)
         discriminator-parsers (into [] (map (juxt make-tag-discriminator
                                                   #(case (-> % m/deref-all m/type)
-                                                     ;(:alt :cat) (wrap-next-after-tag (-xml-parser %))
-                                                     ;(:tuple) (wrap-next-before-tag (-xml-parser %))
                                                      (-xml-parser %))
                                                   #(case (-> % m/deref-all m/type)
-                                                     (:alt :cat :? :+ :repeat :*) false
+                                                     (:alt :cat :? :+ :repeat :* :sequential) false
                                                      true))) children)]
     (fn [^XMLStreamReader r]
-      #_(assert (= (safe-next-tag r) 1) (pr-str (.getEventType r)
-                                                x))
       (log/info :type :-alt-parser :local (.getLocalName r))
       (reduce
        (fn [acc [discriminator parser wrap?]]
@@ -770,7 +778,6 @@
            (if (and discriminator tagk (discriminator tagk))
              (let [v (parser r)]
                (log/info :type :alt :tagk tagk :v v :before-return (debug-element r))
-                ;(skip-closing-and-charactors r)
                (if wrap?
                  (reduced [v])
                  (reduced v)))
@@ -779,34 +786,28 @@
        discriminator-parsers))))
 
 (defn -or-parser [x]
+  "Value-mode choice (bootstrapped-schema emits :or when not under :sequence).
+  Returns the matching arm bare — no single-slot wrap. Map fields such as
+  StatusType, DateType, and AllergyRestrictedChoice expect a plain tuple or
+  sequential, not [[:Tag body]].
+
+  Sequence-particle choices must be generated as :alt (see -alt-parser), not :or."
   (let [children (-> x m/children)
-        ;_ (log/info children)
-        ;; wrap? mirrors -alt-parser: seqex branches already return a vector of
-        ;; items (cat/alt/regex); atomics (tuple/map/string) are wrapped so a
-        ;; parent regex can conj them as a single slot.
-        discriminator-parsers (into [] (map (juxt make-tag-discriminator
-                                                  #(case (-> % m/deref-all m/type)
-                                                     (-xml-parser %))
-                                                  #(case (-> % m/deref-all m/type)
-                                                     (:alt :cat :? :+ :repeat :*) false
-                                                     true))) children)]
+        discriminator-parsers (into []
+                                    (map (juxt make-tag-discriminator
+                                               #(-xml-parser %))
+                                         children))]
     (fn [^XMLStreamReader r]
-      #_(assert (= (safe-next-tag r) 1) (pr-str (.getEventType r)
-                                                x))
       (log/info :type :-or-parser :debug (debug-element r))
       (reduce
-       (fn [acc [discriminator parser wrap?]]
+       (fn [acc [discriminator parser]]
          (let [tagk (when (= 1 (.getEventType r)) (get-tag-kw r))]
            (log/info :type :or :tagk tagk :discriminator discriminator)
            ;; discriminator is nil for :string/:re/etc. — skip rather than NPE
            (if (and discriminator tagk (discriminator tagk))
              (let [v (parser r)]
                (log/info :type :or :tagk tagk :v v :before-return (debug-element r))
-                ;(skip-closing-and-charactors r)
-                ;((exit-tag tagk) r)
-               (if wrap?
-                 (reduced [v])
-                 (reduced v)))
+               (reduced v))
              acc)))
        nil
        discriminator-parsers))))
@@ -962,12 +963,10 @@
         sub-discriminator (make-tag-discriminator child)
         ;_ (log/info child (-> child m/deref-all m/type))
         ;_    (log/info (-> child m/deref-all m/type))
-        ;; :or is inline like :alt so cat branches flatten into the parent
-        ;; regex acc (IVL_TS low/high) instead of a nested single slot.
+        ;; :alt is sequence-choice (wraps atomics as one slot vector). :or is
+        ;; value-mode (bare arm) so it must NOT be inlined — conj the whole arm.
         inline?     (case (-> child m/deref-all m/type)
-                      (:alt :cat :or :? :+ :repeat :*) true
-                      ;(:ref) (do (log/info :ref)
-                      ;           true)
+                      (:alt :cat :? :+ :repeat :*) true
                       false)
         sub-parser (-xml-parser child)
         dereffed-child (m/deref-all child)]

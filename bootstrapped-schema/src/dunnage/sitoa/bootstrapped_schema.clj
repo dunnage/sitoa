@@ -417,11 +417,14 @@
                       (instance? XSWildcard$Any (first fields)))
                  :xml/hiccup
                  :default
-                 ;; Preserve parent :sequence. Only *-seq (sequence context) may
-                 ;; emit malli regex on arms; non-seq types stay :or of bare
-                 ;; tuples / :sequential. When :sequence is already true (seq
-                 ;; forms), multi-element sequence arms still get :xml/in-seq-ex
-                 ;; maps (e.g. IVL center+width).
+                 ;; Dual-mode choice (serde must honor this split):
+                 ;; - :sequence context → :alt  (seqex: parser wraps atomics as
+                 ;;   one slot for parent :cat / regex — IVL_TS, Instruction, …)
+                 ;; - non-seq (element/type body) → :or  (value-mode: parser
+                 ;;   returns bare arm — StatusType, DateType, AllergyRestrictedChoice)
+                 ;; Only *-seq may emit malli regex on arms; non-seq stays
+                 ;; :or of bare tuples / :sequential. Multi-element sequence
+                 ;; arms under :sequence still get :xml/in-seq-ex maps.
                  (into [(if (:sequence context)
                           :alt
                           :or)]

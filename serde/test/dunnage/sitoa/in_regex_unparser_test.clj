@@ -102,3 +102,40 @@
     (is (re-find #"<val><b>y</b></val>" xml-b))
     (is (not (re-find #"<b>" xml-a)))
     (is (not (re-find #"<a>" xml-b)))))
+
+(deftest or-value-mode-single-tuple-and-sequential
+  "Map-field :or of a single tuple arm and a :sequential arm (AllergyRestrictedChoice
+  shape). Value-mode must not force children with in-regex? true — that throws
+  'cannot have sequencial in sequence expression' at unparser construction."
+  (let [sch (schema
+             [:map {:closed true}
+              [:choice {}
+               [:or
+                [:tuple {} [:enum :nka] :string]
+                [:sequential
+                 [:tuple {} [:enum :allergy] :string]]]]])
+        xml-nka (unparse sch {:choice [:nka "none"]})
+        xml-many (unparse sch {:choice [[:allergy "pollen"]
+                                        [:allergy "dust"]]})]
+    (is (re-find #"<choice><nka>none</nka></choice>" xml-nka))
+    (is (re-find #"<choice><allergy>pollen</allergy><allergy>dust</allergy></choice>"
+                 xml-many))
+    (is (not (re-find #"<allergy>" xml-nka)))
+    (is (not (re-find #"<nka>" xml-many)))))
+
+(deftest or-in-regex-cat-still-pos-based
+  "In-regex :or under :cat must keep pos-based child unparsers (IVL_TS-style)."
+  (let [sch (schema
+             [:map {:closed true}
+              [:val {}
+               [:map {:closed true :xml/value-wrapped true}
+                [:xml/value {}
+                 [:cat {}
+                  [:or
+                   [:tuple {} [:enum :a] :string]
+                   [:tuple {} [:enum :b] :string]]
+                  [:tuple {} [:enum :z] :string]]]]]])
+        xml (unparse sch {:val {:xml/value [[:b "mid"] [:z "end"]]}})]
+    (is (re-find #"<b>mid</b>" xml))
+    (is (re-find #"<z>end</z>" xml))
+    (is (re-find #"<val><b>mid</b><z>end</z></val>" xml))))
