@@ -510,13 +510,31 @@
   (when (vector? complex)
     (nth complex 0)))
 
+(defn- promote-value-choice-to-alt
+  "Value-wrapped body is a stream of child elements. Promote bare :or
+  (value-mode choice) to :alt (seqex) so the parser wraps atomic arms as one
+  slot and parent :? / :cat can inline them (IVL_TS low/high, IVL_PQ, …).
+
+  Map-field value types that are pure choice without attrs (SCRIPT StatusType,
+  DateType) stay :or — they never pass through value-wrap."
+  [form]
+  (cond
+    (and (vector? form) (= :or (first form)))
+    (assoc form 0 :alt)
+    (and (vector? form) (#{:? :* :+ :repeat} (first form)))
+    (let [idx (dec (count form))]
+      (assoc form idx (promote-value-choice-to-alt (nth form idx))))
+    (and (vector? form) (= :sequential (first form)))
+    (assoc form (dec (count form))
+           (promote-value-choice-to-alt (last form)))
+    :else form))
+
 (defn- value-wrap
   "Attrs map + :xml/value content under value-wrapped complex type."
   [attr-map content]
   (-> attr-map
       (update 1 assoc :xml/value-wrapped true)
-      (conj [:xml/value {} content])))
-
+      (conj [:xml/value {} (promote-value-choice-to-alt content)])))
 (defn- strip-regex-wrapper
   "Unwrap :* / :? / :+ / :repeat to inspect the underlying content form."
   [form]
