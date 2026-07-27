@@ -1028,6 +1028,7 @@
     :zoned-date (string-encode-unparser x in-regex?)
     :enum (string-unparser x in-regex?)
     :decimal (string-encode-unparser x in-regex?)
+    :double (string-encode-unparser x in-regex?)
     :int (string-encode-unparser x in-regex?)
     :any (string-unparser  x in-regex?)
     :xml/hiccup (hiccup-unparser x in-regex?)
