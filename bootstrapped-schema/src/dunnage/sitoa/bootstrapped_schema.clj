@@ -257,6 +257,17 @@
 
                 (prn :fail (bean in)))))))
 
+(defn- mark-map-in-seq-ex
+  "Maps that appear as sequence items (under :? / :* / :+ / :repeat) are entered
+  at the first child start tag, not the parent. Flag :xml/in-seq-ex so the map
+  parser does not advance past that tag (fixes StrucDoc.Thead/Tbody tr rows)."
+  [msch]
+  (if (and (vector? msch) (= :map (first msch)))
+    (let [props (second msch)
+          props (if (map? props) props {})]
+      (assoc msch 1 (assoc props :xml/in-seq-ex true)))
+    msch))
+
 (defn wrap-regex [context ^XSParticle in msch]
   (let [min-occurs (.getMinOccurs in)
         max-occurs (.getMaxOccurs in)
@@ -269,11 +280,11 @@
       (:sequence context)
       (cond
         (and (not can-be-empty?) (not repeated?)) msch
-        (and can-be-empty? (not repeated?)) [:? msch]
-        (and (not can-be-empty?) repeated? unbounded?) [:+ msch]
-        (and can-be-empty? repeated? unbounded?) [:* msch]
+        (and can-be-empty? (not repeated?)) [:? (mark-map-in-seq-ex msch)]
+        (and (not can-be-empty?) repeated? unbounded?) [:+ (mark-map-in-seq-ex msch)]
+        (and can-be-empty? repeated? unbounded?) [:* (mark-map-in-seq-ex msch)]
         :else
-        [:repeat {:min min-occurs, :max max-occurs} msch])
+        [:repeat {:min min-occurs, :max max-occurs} (mark-map-in-seq-ex msch)])
       repeated?
       [:sequential msch]
       ;can-be-empty?
@@ -334,16 +345,24 @@
     (wrap-regex context in out)))
 
 (defn handle-toplevel-particle [context ^XSParticle in]
-  (let [t (.getTerm in)]
-    (assert (not (some-> (.asElementDecl t))))
-    ;(assert (not (.isRepeated x)) (pr-str (bean x)))
-    (or
-     (some->> (.asModelGroup t)
-              (handle-model-group context))
-     (some->> (.asModelGroupDecl t)
-              (handle-model-group-decl context))
-     (some-> (.asWildcard t)
-             handle-wildcard))))
+  "Convert a complex type's content particle, honoring min/maxOccurs.
+
+  Occurrence wrappers follow dual-mode registry design:
+  - non-seq types (no :sequence in context) → bare / :sequential (no malli regex)
+  - *-seq types (:sequence true) → :? / :* / :+ / :repeat
+
+  Previously maxOccurs was ignored at the top particle, so unbounded choice
+  (e.g. StrucDoc.Text) collapsed to a single :or under *-seq forms."
+  (let [t (.getTerm in)
+        body (or
+              (some->> (.asModelGroup t)
+                       (handle-model-group context))
+              (some->> (.asModelGroupDecl t)
+                       (handle-model-group-decl context))
+              (some-> (.asWildcard t)
+                      handle-wildcard))]
+    (when body
+      (wrap-regex context in body))))
 
 (defn all-maps? [x]
   (transduce
@@ -398,6 +417,14 @@
                       (instance? XSWildcard$Any (first fields)))
                  :xml/hiccup
                  :default
+                 ;; Dual-mode choice (serde must honor this split):
+                 ;; - :sequence context → :alt  (seqex: parser wraps atomics as
+                 ;;   one slot for parent :cat / regex — IVL_TS, Instruction, …)
+                 ;; - non-seq (element/type body) → :or  (value-mode: parser
+                 ;;   returns bare arm — StatusType, DateType, AllergyRestrictedChoice)
+                 ;; Only *-seq may emit malli regex on arms; non-seq stays
+                 ;; :or of bare tuples / :sequential. Multi-element sequence
+                 ;; arms under :sequence still get :xml/in-seq-ex maps.
                  (into [(if (:sequence context)
                           :alt
                           :or)]
@@ -483,6 +510,75 @@
   (when (vector? complex)
     (nth complex 0)))
 
+(defn- promote-value-choice-to-alt
+  "Value-wrapped body is a stream of child elements. Promote bare :or
+  (value-mode choice) to :alt (seqex) so the parser wraps atomic arms as one
+  slot and parent :? / :cat can inline them (IVL_TS low/high, IVL_PQ, …).
+
+  Map-field value types that are pure choice without attrs (SCRIPT StatusType,
+  DateType) stay :or — they never pass through value-wrap."
+  [form]
+  (cond
+    (and (vector? form) (= :or (first form)))
+    (assoc form 0 :alt)
+    (and (vector? form) (#{:? :* :+ :repeat} (first form)))
+    (let [idx (dec (count form))]
+      (assoc form idx (promote-value-choice-to-alt (nth form idx))))
+    (and (vector? form) (= :sequential (first form)))
+    (assoc form (dec (count form))
+           (promote-value-choice-to-alt (last form)))
+    :else form))
+
+(defn- value-wrap
+  "Attrs map + :xml/value content under value-wrapped complex type."
+  [attr-map content]
+  (-> attr-map
+      (update 1 assoc :xml/value-wrapped true)
+      (conj [:xml/value {} (promote-value-choice-to-alt content)])))
+(defn- strip-regex-wrapper
+  "Unwrap :* / :? / :+ / :repeat to inspect the underlying content form."
+  [form]
+  (if (and (vector? form) (#{:* :? :+ :repeat} (first form)))
+    (last form)
+    form))
+
+(defn- element-choice-form?
+  "True when form is :or/:alt of element tuples (StrucDoc-style child choice)."
+  [form]
+  (let [form (strip-regex-wrapper form)]
+    (and (vector? form)
+         (#{:or :alt} (complex-tag form))
+         (let [children (if (map? (second form))
+                          (drop 2 form)
+                          (rest form))]
+           (and (seq children)
+                (every? (fn [child]
+                          (and (vector? child) (= :tuple (first child))))
+                        children))))))
+
+(defn- empty-struct-map?
+  "Empty closed map with no entries (ST-style empty complex content)."
+  [form]
+  (and (vector? form)
+       (= :map (first form))
+       (<= (count form) 2)))
+
+(defn- contains-form?
+  "True if form tree contains `needle` (by =)."
+  [form needle]
+  (or (= form needle)
+      (and (coll? form)
+           (not (map-entry? form))
+           (some #(contains-form? % needle) form))))
+
+(defn- ed-style-mixed?
+  "ED-like mixed: :cat with structured children plus :xml/hiccup tail.
+  Keep typed structure for reference/thumbnail rather than collapsing to hiccup."
+  [complex]
+  (and (vector? complex)
+       (= :cat (complex-tag complex))
+       (contains-form? complex :xml/hiccup)))
+
 (extend-protocol MalliXML
   XSComplexType
   (-mtype [x context]
@@ -498,9 +594,15 @@
                            .asParticle
                            (handle-toplevel-particle context))]
       (cond
-        (and attr-map simple) (-> attr-map
-                                  (update 1 assoc :xml/value-wrapped true)
-                                  (conj [:xml/value {} simple]))
+        (and attr-map simple)
+        (value-wrap attr-map simple)
+
+        ;; XSD mixed="true": character data + optional element children.
+        ;; Always capture as :xml/hiccup for fidelity (StrucDoc, EN/PN, ED free
+        ;; text, ADXP, …). Structured ED reference/thumbnail become hiccup nodes.
+        (and attr-map mixed?)
+        (value-wrap attr-map :xml/hiccup)
+
         (and attr-map complex)
         (case (complex-tag complex)
           :map
@@ -512,9 +614,8 @@
                  attr-map]
                 (drop 2)
                 complex)
-          (-> attr-map
-              (update 1 assoc :xml/value-wrapped true)
-              (conj [:xml/value {} complex])))
+          (value-wrap attr-map complex))
+
         (and attr-map (nil? complex)) attr-map
         simple simple
         complex complex
@@ -586,34 +687,27 @@
             "date", prim-keyword                            ;javax.xml.datatype.XMLGregorianCalendar
             "dateTime", prim-keyword                        ;javax.xml.datatype.XMLGregorianCalendar
             "string", (malli-string-primitive x context)
-
-            #_#_nil (do                                         ;(prn (bean x))
-                      (-mtype base-type context))))
+            ;; User simple types / unhandled primitives (FOP length_Type, …)
+            (if base-type
+              (-mtype base-type context)
+              (or prim-keyword :string))))
         "list"
         (if-some [ltype (.asList x)]
           (let [it (.getItemType ltype)]
-            (do                                             ; (identical? ct x)
-              #_(do (throw (ex-info "empty" {}))            ;(prn (.getName x) (.getDeclaredFacets x)) #_(pp/pprint (bean x))
-                    :any)
-              (prn it)
-              [:sequence {:primitive true}
-               (if (anon-type? it)
-                 (-mtype it (dissoc context :sequence))
-                 (-seq-ref it (dissoc context :sequence)))]))
+            [:sequential
+             (if (anon-type? it)
+               (-mtype it (dissoc context :sequence))
+               (-seq-ref it (dissoc context :sequence)))])
           (case (get-primitive-type x)
-            "IDREFS" :string
-            "ENTITIES" :string
-            "NMTOKENS" :string))
+            ("IDREFS" "ENTITIES" "NMTOKENS") :string
+            ;; XSOM sometimes reports list variety without asList (FOP compounds)
+            :string))
         "union"
-        (let []
-          (throw (ex-info "union is not supported yet" {}))
-          [:xml/hiccup {:name (.getName x)}]
-          #_(if (identical? ct x)
-              (do (prn (.getName x) (.getDeclaredFacets x)) #_(pp/pprint (bean x)))
-              [:sequence {:primitive true}
-               (if (anon-type? ct)
-                 (-mtype ct (dissoc context :sequence))
-                 (-seq-ref ct (dissoc context :sequence)))])))))
+        ;; Prefer member expansion when available; otherwise open string.
+        (if (instance? XSUnionSimpleType x)
+          (-mtype ^XSUnionSimpleType x context)
+          (or (when base-type (-mtype base-type context))
+              :string)))))
   (-seq-possible? [x context]
     false)
   (-seq-ref [x context]
