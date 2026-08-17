@@ -373,6 +373,23 @@
 
 (declare read-hiccup)
 
+(defn- conj-text
+  "Append a character run to mixed content.
+
+  A reader splits text at entity references and CDATA boundaries, so
+  `a &lt;b&gt; c` arrives as five events while the equivalent literal arrives as
+  one. A run that continues the previous one is merged into it, whitespace
+  included, so hiccup content does not depend on that chunking and
+  unparse -> reparse reaches a fixpoint. A run that starts fresh is still
+  dropped when it is only the whitespace between two child elements."
+  [child-list text]
+  (let [i (dec (count child-list))]
+    (cond
+      (and (nat-int? i) (string? (nth child-list i)))
+      (assoc child-list i (str (nth child-list i) text))
+      (str/blank? text) child-list
+      :else (conj child-list text))))
+
 (defn- read-hiccup-children
   "Collect mixed-content children until END_ELEMENT. Leaves the reader on
   that END_ELEMENT. Nested elements are full hiccup nodes via read-hiccup."
@@ -386,13 +403,7 @@
           2 ; END_ELEMENT
           child-list
           (4 12) ; CHARACTERS, CDATA
-          ;; Keep significant whitespace (newlines between words).
-          ;; Drop only fully blank text nodes; consecutive text is
-          ;; merged on reparse — canonical-l1 merges for equality.
-          (let [text (.getText r)]
-            (recur (if (str/blank? text)
-                     child-list
-                     (conj child-list text))))
+          (recur (conj-text child-list (.getText r)))
           ; default
           (recur child-list)))
       child-list)))
@@ -694,19 +705,37 @@
     :alt false
     false))
 
+(def any-tag-discriminator
+  "Discriminator for content that accepts any start tag (:xml/hiccup)."
+  (constantly true))
+
+(defn union-discriminators
+  "Combine the discriminators of the members of a choice or sequence.
+
+  A member discriminator is a set of tags, nil (leaf text, no start tag), or a
+  predicate accepting any tag. One any-tag member makes the whole union accept
+  any tag, so the union cannot be represented as a set of tags."
+  [discriminators]
+  (let [discriminators (remove nil? discriminators)]
+    (if (some fn? discriminators)
+      any-tag-discriminator
+      (into #{} cat discriminators))))
+
 (defn -cat-discriminator [x]
-  (into #{}
-        (comp (take-while-plus-1 (fn [item]
-                                   (seqex-optional item)))
-              (mapcat (fn [item]
-                        (make-tag-discriminator item))))
-        (-> x m/children)))
+  (union-discriminators
+   (into []
+         (comp (take-while-plus-1 (fn [item]
+                                    (seqex-optional item)))
+               (map (fn [item]
+                      (make-tag-discriminator item))))
+         (-> x m/children))))
 
 (defn -alt-discriminator [x]
-  (into #{}
-        (comp (mapcat (fn [item]
-                        (make-tag-discriminator item))))
-        (-> x m/children)))
+  (union-discriminators
+   (into []
+         (map (fn [item]
+                (make-tag-discriminator item)))
+         (-> x m/children))))
 (defn -multi-discriminator [x]
   (into #{}
         (map (fn [y]
@@ -736,7 +765,7 @@
     (:? :*  :+  :repeat :sequential) (make-tag-discriminator (-single-sub-item x))
     :map (-map-discriminator x)
     :merge  (-alt-discriminator x)
-    :xml/hiccup (constantly true)
+    :xml/hiccup any-tag-discriminator
     (:string :time/offset-date-time :time/local-date :time/local-date-time :enum :re :decimal :double
              :xml/base64Binary :xml/hexBinary :time/duration :time/period :time/year :time/year-month :time/month-day :time/month) nil
     ;:any (string-parser x)
@@ -749,6 +778,32 @@
     :and (let [f (first (m/children x))]
            (make-tag-discriminator f))
     :any nil))
+
+(defn- wildcard-member?
+  "True for a bare :xml/hiccup member of a seqex - an xs:any wildcard.
+  Mixed content also compiles to :xml/hiccup, but it reaches the parser as a
+  map's :xml/value entry, never as a seqex member."
+  [x]
+  (= :xml/hiccup (m/type (m/deref-all x))))
+
+(defn wrap-exit-wildcard
+  "read-hiccup stops on the END_ELEMENT of the element it consumed, which is
+  what :tuple and single-tag parsers want - they exit that tag themselves. A
+  wildcard member of a seqex has no such wrapper, so it has to step past its own
+  end tag or the surrounding sequence cannot make progress."
+  [parser]
+  (fn [^XMLStreamReader r]
+    (let [v (parser r)]
+      (when (= 2 (.getEventType r))
+        (safe-next-tag r))
+      v)))
+
+(defn seqex-member-parser
+  "Parser for one member of a seqex (:alt / :or / :cat / :? / :* / :+ / :repeat)."
+  [x]
+  (if (wildcard-member? x)
+    (wrap-exit-wildcard (-xml-parser x))
+    (-xml-parser x)))
 
 (defn skip-seqex [x]
   (case (m/type x)
@@ -764,8 +819,7 @@
   Seqex arms (cat/alt/regex) already return a vector and are not re-wrapped."
   (let [children (-> x m/children)
         discriminator-parsers (into [] (map (juxt make-tag-discriminator
-                                                  #(case (-> % m/deref-all m/type)
-                                                     (-xml-parser %))
+                                                  seqex-member-parser
                                                   #(case (-> % m/deref-all m/type)
                                                      (:alt :cat :? :+ :repeat :* :sequential) false
                                                      true))) children)]
@@ -795,7 +849,7 @@
   (let [children (-> x m/children)
         discriminator-parsers (into []
                                     (map (juxt make-tag-discriminator
-                                               #(-xml-parser %))
+                                               seqex-member-parser)
                                          children))]
     (fn [^XMLStreamReader r]
       (log/info :type :-or-parser :debug (debug-element r))
@@ -832,10 +886,7 @@
   (let [children (-> x m/children)
         ;_ (log/info children)
         discriminator-parsers (into [] (map (juxt make-tag-discriminator
-                                                  #(case (-> % m/deref-all m/type)
-                                                     ;(:alt :cat) (wrap-next-after-tag (-xml-parser %))
-                                                     ;(:tuple) (wrap-next-before-tag (-xml-parser %))
-                                                     (-xml-parser %)))) children)]
+                                                  seqex-member-parser)) children)]
     (fn [^XMLStreamReader r]
       #_(assert (= (safe-next-tag r) 1) (pr-str (.getEventType r)
                                                 x))
@@ -869,7 +920,7 @@
                                               ;           [true (-xml-parser %)])
                                               ;(:or) [false (wrap-next-after-tag (-xml-parser %))]
                                               ; (:tuple) (wrap-next-before-tag (-xml-parser %))
-                                             [false (-xml-parser %)])
+                                             [false (seqex-member-parser %)])
                                           #_(log/info (-> % m/deref-all m/children first m/type))))
                                     children)]
     (fn [^XMLStreamReader r]
@@ -980,7 +1031,7 @@
         inline?     (case (-> child m/deref-all m/type)
                       (:alt :cat :? :+ :repeat :*) true
                       false)
-        sub-parser (-xml-parser child)
+        sub-parser (seqex-member-parser child)
         dereffed-child (m/deref-all child)]
     (fn [^XMLStreamReader r]
       (loop [event-type (.getEventType r) acc (transient [])]
@@ -1031,20 +1082,34 @@
       (log/info :type :refparser :child child :debug  (debug-element r))
       ((get @refparsers child) r))))
 
+(def ^:private simplify-precedence
+  "How much each string-flavoured schema constrains the text it accepts: an
+  enumeration is narrower than a pattern, which is narrower than a bare string.
+  An :and of a facet chain keeps its narrowest member."
+  {:enum 2 :re 1 :string 0})
+
 (defn simplify-reduce
   ([] nil)
   ([acc] acc)
   ([acc item]
-   (if (nil? acc)
-     item
-     (case [(m/type acc) (m/type item)]
-       [:re :string] acc
-       [:enum :re] acc                                      ;should filter enum items by regex
-       [:enum :enum] (m/schema
-                      (into [:enum]
-                            (clojure.set/intersection
-                             (into #{} (m/children acc))
-                             (into #{} (m/children item)))))))))
+   (cond
+     (nil? acc) item
+
+     (= [:enum :enum] [(m/type acc) (m/type item)])
+     (m/schema
+      (into [:enum]                                         ;should filter enum items by regex
+            (clojure.set/intersection
+             (into #{} (m/children acc))
+             (into #{} (m/children item)))))
+
+     :else
+     (let [acc-rank (simplify-precedence (m/type acc))
+           item-rank (simplify-precedence (m/type item))]
+       (cond
+         (nil? acc-rank) item
+         (nil? item-rank) acc
+         (>= acc-rank item-rank) acc
+         :else item)))))
 
 (defn simplify [schema]
   (case (m/type schema)
@@ -1063,7 +1128,7 @@
           simplify-reduce))
 
     :malli.core/schema (recur (m/deref schema))
-    (:enum :re :string) schema))
+    schema))
 
 (defn toplevel-wrapper [x p]
   (let [{:keys [topElement]} (m/properties x)]

@@ -132,10 +132,49 @@
         (keyword default-ns name)
         (keyword name)))))
 
+(def xmlschema-ns "org.w3.www.2001.XMLSchema")
+
+(def xsd-builtin-names
+  "Local names XSOM synthesizes in the XML Schema namespace for the built-in
+  datatype hierarchy; they come from XSOM's bundled datatypes.xsd, not from the
+  document being parsed. The ones sitoa models are the keys of
+  xml-primitives/xmlschema-registry; anyType and the three builtin list types
+  are builtins too, sitoa simply has no mapping for them.
+
+  Anything else in that namespace can only come from a document that declares
+  it - the schema for schemas (XMLSchema.xsd) declares element, complexType,
+  particle and friends there - so it is a real declaration and must reach the
+  registry."
+  (into #{"anyType" "IDREFS" "NMTOKENS" "ENTITIES"}
+        (map name)
+        (keys xml-primitives/xmlschema-registry)))
+
+(defn xsd-builtin-kw?
+  "True for a keyword naming a built-in XML Schema type."
+  [x]
+  (and (some? x)
+       (= xmlschema-ns (namespace x))
+       (contains? xsd-builtin-names (name x))))
+
+(def xsd-unmodeled-builtin-forms
+  "Inline malli forms for built-in XML Schema types xmlschema-registry does not
+  model. They never become registry entries, so a reference to one is inlined
+  instead of left dangling. anyType is unconstrained content."
+  {"anyType" :xml/hiccup})
+
+(defn- unmodeled-builtin-form [x]
+  (when (= xmlschema-ns (namespace x))
+    (let [n (name x)]
+      (get xsd-unmodeled-builtin-forms
+           (if (clojure.string/ends-with? n "-seq")
+             (subs n 0 (- (count n) 4))
+             n)))))
+
 (defn wrap-ref-np [x]
-  (if (= (namespace x) "org.w3.www.2001.XMLSchema")
-    x
-    [:ref x]))
+  (or (unmodeled-builtin-form x)
+      (if (xsd-builtin-kw? x)
+        x
+        [:ref x])))
 (defn ->nskw-seq [^XSDeclaration x default-ns]
   (when-some [name (some-> (.getName x) (str "-seq"))]
     (if-some [n (some-> (.getTargetNamespace x)
@@ -378,13 +417,15 @@
       (wrap-regex (assoc context :content-particle true) in body))))
 
 (defn all-maps? [x]
+  ;; Children can be bare keywords (:xml/hiccup, builtin type references), which
+  ;; nth cannot index; treat those as a non-match instead of throwing.
   (transduce
    (drop 2)
    (fn ([acc] (if (nil? acc)
                 false
                 acc))
      ([acc nv]
-      (if (= #{:map :merge} (nth nv 0))
+      (if (and (vector? nv) (= #{:map :merge} (nth nv 0)))
         true
         (reduced false))))
    nil
@@ -763,6 +804,13 @@
                      [tag x])))
         (iterator-seq (.iterateElementDecls schema))))
 
+(defn xsd-builtin-decl?
+  "True when a declaration is a built-in XML Schema type rather than something
+  the parsed document declares. Decided from the declaration's own name so a
+  -seq dual is dropped or kept together with its base entry."
+  [^XSDeclaration x default-ns]
+  (xsd-builtin-kw? (->nskw x default-ns)))
+
 (defn xsd->registry [{default-ns :default-ns :as context} schema]
   (let [seq-context (assoc context :sequence true)]
     (-> xml-primitives/xmlschema-registry
@@ -771,14 +819,14 @@
           (remove (fn [^XSType x]
                     (some-> x .asSimpleType .isPrimitive)))
           (filter #(-seq-possible? % nil))
-          (remove #(-> (->nskw-seq % default-ns) namespace (= "org.w3.www.2001.XMLSchema")))
+          (remove #(xsd-builtin-decl? % default-ns))
           (map #(vector (->nskw-seq % default-ns) (-mtype % seq-context))))
          (iterator-seq (.iterateTypes schema)))
         (into
          (comp
           (remove (fn [^XSType x]
                     (some-> x .asSimpleType .isPrimitive)))
-          (remove #(-> (->nskw % default-ns) namespace (= "org.w3.www.2001.XMLSchema")))
+          (remove #(xsd-builtin-decl? % default-ns))
           (map #(vector (->nskw % default-ns) (-mtype % context))))
          (iterator-seq (.iterateTypes schema)))
 
@@ -786,14 +834,14 @@
          (comp
           (filter (fn [^XSModelGroupDecl x]
                     (.isGlobal x)))
-          (remove #(-> (->nskw-seq % default-ns) namespace (= "org.w3.www.2001.XMLSchema")))
+          (remove #(xsd-builtin-decl? % default-ns))
           (map #(vector (->nskw-seq % default-ns) (-mtype % seq-context))))
          (iterator-seq (.iterateModelGroupDecls schema)))
         (into
          (comp
           (filter (fn [^XSModelGroupDecl x]
                     (.isGlobal x)))
-          (remove #(-> (->nskw % default-ns) namespace (= "org.w3.www.2001.XMLSchema")))
+          (remove #(xsd-builtin-decl? % default-ns))
           (map #(vector (->nskw % default-ns) (-mtype % context))))
          (iterator-seq (.iterateModelGroupDecls schema))))))
 
