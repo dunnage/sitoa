@@ -268,23 +268,35 @@
       (assoc msch 1 (assoc props :xml/in-seq-ex true)))
     msch))
 
+(defn- regex-occurrence
+  "Malli seqex wrapper for a particle's min/maxOccurs."
+  [min-occurs max-occurs msch]
+  (let [can-be-empty? (= 0 min-occurs)
+        unbounded? (= max-occurs -1)
+        repeated? (or (> max-occurs 1) (= max-occurs -1))]
+    (cond
+      (and (not can-be-empty?) (not repeated?)) msch
+      (and can-be-empty? (not repeated?)) [:? (mark-map-in-seq-ex msch)]
+      (and (not can-be-empty?) repeated? unbounded?) [:+ (mark-map-in-seq-ex msch)]
+      (and can-be-empty? repeated? unbounded?) [:* (mark-map-in-seq-ex msch)]
+      :else
+      [:repeat {:min min-occurs, :max max-occurs} (mark-map-in-seq-ex msch)])))
+
 (defn wrap-regex [context ^XSParticle in msch]
   (let [min-occurs (.getMinOccurs in)
         max-occurs (.getMaxOccurs in)
-        can-be-empty? (= 0 min-occurs)
-        unbounded? (= max-occurs -1)
         repeated? (or (> max-occurs 1) (= max-occurs -1))]
     (cond
       (= 0 max-occurs)
       nil
       (:sequence context)
-      (cond
-        (and (not can-be-empty?) (not repeated?)) msch
-        (and can-be-empty? (not repeated?)) [:? (mark-map-in-seq-ex msch)]
-        (and (not can-be-empty?) repeated? unbounded?) [:+ (mark-map-in-seq-ex msch)]
-        (and can-be-empty? repeated? unbounded?) [:* (mark-map-in-seq-ex msch)]
-        :else
-        [:repeat {:min min-occurs, :max max-occurs} (mark-map-in-seq-ex msch)])
+      (regex-occurrence min-occurs max-occurs msch)
+      ;; A complex type's own content is a child-element stream the parser reads
+      ;; with seqex semantics, so a repeated top particle needs a malli regex.
+      ;; :sequential there never matches a child start tag (StrucDoc.Thead/Tbody/
+      ;; Tfoot/Tr/Colgroup rows). Non-repeated non-seq forms stay bare.
+      (and repeated? (:content-particle context))
+      (regex-occurrence min-occurs max-occurs msch)
       repeated?
       [:sequential msch]
       ;can-be-empty?
@@ -348,7 +360,8 @@
   "Convert a complex type's content particle, honoring min/maxOccurs.
 
   Occurrence wrappers follow dual-mode registry design:
-  - non-seq types (no :sequence in context) → bare / :sequential (no malli regex)
+  - non-seq types (no :sequence in context) → bare, or :? / :* / :+ / :repeat
+    when the top particle itself repeats (its content is a child stream)
   - *-seq types (:sequence true) → :? / :* / :+ / :repeat
 
   Previously maxOccurs was ignored at the top particle, so unbounded choice
@@ -362,7 +375,7 @@
               (some-> (.asWildcard t)
                       handle-wildcard))]
     (when body
-      (wrap-regex context in body))))
+      (wrap-regex (assoc context :content-particle true) in body))))
 
 (defn all-maps? [x]
   (transduce
