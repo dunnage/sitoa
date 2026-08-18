@@ -274,12 +274,16 @@
                                       (assoc :max max-occurs))
                         ty-ref]
                        ty-ref)]))
+                ;; :xml/group distinguishes nested model-group maps from maps
+                ;; built out of inline entries: only the latter carry
+                ;; :xml/in-seq-ex in *-seq forms, and their value-mode props
+                ;; are otherwise identical when the group has minOccurs=1.
                 (when-some [x (.asModelGroup term)]
                   (assert (= "sequence" (str (.getCompositor x))))
                   (assert (not value-sequence?))
                   (transduce
                    (keep (handle-fields-wrapper2 (assoc context :optional-group (= 0 min-occurs))))
-                   (simplify-fields (cond-> {:closed true}
+                   (simplify-fields (cond-> {:closed true :xml/group true}
                                       (= 0 min-occurs)
                                       (assoc :optional-group true)))
                    (.getChildren x)))
@@ -289,7 +293,7 @@
                     (assert (not value-sequence?))
                     (transduce
                      (keep (handle-fields-wrapper2 (assoc context :optional-group (= 0 min-occurs))))
-                     (simplify-fields (cond-> {:closed true}
+                     (simplify-fields (cond-> {:closed true :xml/group true}
                                         (= 0 min-occurs)
                                         (assoc :optional-group true)))
                      (.getChildren x))))
@@ -321,6 +325,19 @@
       :else
       [:repeat {:min min-occurs, :max max-occurs} (mark-map-in-seq-ex msch)])))
 
+(defn- tag-occurs-zero
+  "Record minOccurs=0 on a value-mode form so the seqex (*-seq) form remains
+  derivable. XML has no null: at the value level an emptiable particle means
+  the content slot may be absent, not that a value may be nil, so the bound is
+  carried as a property instead of a wrapper schema. Keywords (:xml/hiccup)
+  cannot carry props and stay untagged."
+  [form]
+  (if (vector? form)
+    (if (map? (nth form 1 nil))
+      (update form 1 assoc :xml/min 0)
+      (into [(nth form 0) {:xml/min 0}] (subvec form 1)))
+    form))
+
 (defn wrap-regex [context ^XSParticle in msch]
   (let [min-occurs (.getMinOccurs in)
         max-occurs (.getMaxOccurs in)
@@ -343,8 +360,8 @@
                      (not= max-occurs -1)
                      (assoc :max (long max-occurs)))
        msch]
-      ;can-be-empty?
-      ;[:maybe msch]
+      (= 0 min-occurs)
+      (tag-occurs-zero msch)
       :else
       msch)))
 
@@ -849,6 +866,160 @@
           (remove #(xsd-builtin-decl? % default-ns))
           (map #(vector (->nskw % default-ns) (-mtype % context))))
          (iterator-seq (.iterateModelGroupDecls schema))))))
+
+;; ---------------------------------------------------------------------------
+;; Deriving *-seq forms from value forms
+;; ---------------------------------------------------------------------------
+
+(def ^:private propless-when-empty
+  "Heads the generator writes without a props slot when props are empty."
+  #{:or :alt :ref})
+
+(defn- form-head [form] (when (vector? form) (nth form 0)))
+
+(defn- form-props [form]
+  (when (vector? form)
+    (let [p (nth form 1 nil)]
+      (when (map? p) p))))
+
+(defn- form-children [form]
+  (if (form-props form) (subvec form 2) (subvec form 1)))
+
+(defn- occurs-zero? [form] (= 0 (:xml/min (form-props form))))
+
+(defn- strip-occurs-tag [form]
+  (if-some [props (form-props form)]
+    (let [props (dissoc props :xml/min)]
+      (if (and (empty? props) (propless-when-empty (form-head form)))
+        (into [(nth form 0)] (subvec form 2))
+        (assoc form 1 props)))
+    form))
+
+(defn- attr-entry? [entry] (boolean (:xml/attr (nth entry 1 nil))))
+
+(defn- attrs-only-map? [form]
+  (and (= :map (form-head form))
+       (every? #(and (vector? %) (attr-entry? %)) (form-children form))))
+
+(defn- element-content-form?
+  "True when a value form describes element content (a particle) rather than a
+  simple-type value. Needed to tell a choice :or from a union :or, and a group
+  ref from a simple-type ref; refs resolve through the value registry."
+  [registry seen form]
+  (cond
+    (vector? form)
+    (case (form-head form)
+      (:map :merge :cat :tuple :alt :xml/hiccup) true
+      :ref (let [k (peek form)]
+             (and (keyword? k)
+                  (not (contains? seen k))
+                  (element-content-form? registry (conj seen k) (get registry k))))
+      :or (boolean (some #(element-content-form? registry seen %) (form-children form)))
+      (:sequential :? :* :+ :repeat) (element-content-form? registry seen (peek form))
+      false)
+    :else false))
+
+(defn- seq-form-key [k] (keyword (namespace k) (str (name k) "-seq")))
+
+(defn- rename-seq-ref [form]
+  (let [i (dec (count form))]
+    (assoc form i (seq-form-key (nth form i)))))
+
+(declare convert-content-form)
+
+(defn- convert-particle-form
+  "Rewrite one occurrence position of a value form into its seqex equivalent:
+  :xml/min 0 and :sequential {:min .. :max ..} carry the XSD bounds back into
+  regex-occurrence, everything else converts in place."
+  [registry form]
+  (cond
+    (occurs-zero? form)
+    (regex-occurrence 0 1 (convert-content-form registry (strip-occurs-tag form)))
+
+    (and (= :sequential (form-head form))
+         (form-props form)
+         (element-content-form? registry #{} (peek form)))
+    (let [{mn :min mx :max} (form-props form)]
+      (regex-occurrence (or mn 1) (or mx -1) (convert-content-form registry (peek form))))
+
+    :else (convert-content-form registry form)))
+
+(defn- convert-choice-form [registry form]
+  (if (some #(element-content-form? registry #{} %) (form-children form))
+    (into [:alt] (map #(convert-particle-form registry %)) (form-children form))
+    form))
+
+(defn- convert-content-form
+  "Rewrite a value-mode content form (type body, :xml/value content, or a
+  choice arm) into its seqex equivalent. Forms identical in both modes (:cat
+  bodies, element tuples, simple types) pass through untouched."
+  [registry form]
+  (if-not (vector? form)
+    form
+    (case (form-head form)
+      :ref (if (element-content-form? registry #{} form)
+             (rename-seq-ref form)
+             form)
+      (:or :alt) (convert-choice-form registry form)
+      :map (if (or (attrs-only-map? form) (:xml/group (form-props form)))
+             form
+             (mark-map-in-seq-ex form))
+      ;; In a merge only the maps built from inline entries (the transducer's
+      ;; init map and trailing entry maps) carry :xml/in-seq-ex in seq mode;
+      ;; nested model-group maps (tagged :xml/group) do not.
+      :merge (into [:merge {}]
+                   (map #(if (and (= :map (form-head %))
+                                  (not (attrs-only-map? %))
+                                  (not (:xml/group (form-props %))))
+                           (mark-map-in-seq-ex %)
+                           %))
+                   (form-children form))
+      (:? :* :+ :repeat)
+      (assoc form (dec (count form))
+             (convert-content-form registry (peek form)))
+      form)))
+
+(defn value-form->seq-form
+  "Derive the *-seq registry form of a complex type or global model group from
+  its value-mode form. registry is the value half of the registry, used to
+  resolve refs."
+  [registry form]
+  (if-not (vector? form)
+    form
+    (let [props (form-props form)]
+      (cond
+        ;; Attrs + emptiable map content diverge structurally: the value form
+        ;; merges attrs with the tagged map, the seq form value-wraps attrs
+        ;; around [:? map].
+        (and (= :merge (form-head form))
+             (some occurs-zero? (form-children form)))
+        (let [args (form-children form)
+              attrs (first (filter attrs-only-map? args))
+              content (first (filter occurs-zero? args))]
+          (value-wrap attrs
+                      (regex-occurrence 0 1 (convert-content-form
+                                             registry (strip-occurs-tag content)))))
+
+        (:xml/value-wrapped props)
+        (into [(nth form 0) props]
+              (map (fn [entry]
+                     (if (and (vector? entry) (= :xml/value (nth entry 0)))
+                       (assoc entry 2 (convert-particle-form registry (nth entry 2)))
+                       entry)))
+              (form-children form))
+
+        :else (convert-particle-form registry form)))))
+
+(defn derive-seq-registry
+  "Derive the *-seq half of a dual-mode registry from its value half. Entries
+  whose seq form would be byte-identical to the value form (simple content,
+  attrs-only, mixed) are skipped: nothing references their *-seq name."
+  [value-registry]
+  (into {}
+        (keep (fn [[k v]]
+                (when (element-content-form? value-registry #{} v)
+                  [(seq-form-key k) (value-form->seq-form value-registry v)])))
+        value-registry))
 
 (defn xsd->schema [context f]
   (let [schema (parse-xsd f)
