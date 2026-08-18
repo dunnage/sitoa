@@ -32,7 +32,9 @@
   this generator, and real consumers (furl) always pick a start type first."
   [registry top-type root-tag]
   (let [arm (some (fn [[tag arm]] (when (= tag root-tag) arm)) (drop 2 top-type))]
-    (m/schema [:schema {:registry registry :topElement (name root-tag)} (nth arm 3)]
+    ;; The arm is [:tuple [:enum tag] type-ref], with properties when the
+    ;; emitter kept any, so the type reference is the last child either way.
+    (m/schema [:schema {:registry registry :topElement (name root-tag)} (peek arm)]
               xml-primitives/external-registry)))
 
 (defn- round-trip [registry top-type parse f]

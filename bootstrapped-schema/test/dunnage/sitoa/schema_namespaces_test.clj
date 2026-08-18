@@ -51,7 +51,7 @@
   (testing "attribute rows are sorted among themselves at the indexes they held"
     (is (= [:map {:closed true}
             [:a {:xml/attr true} :string]
-            [:zz {} :string]
+            [:zz :string]
             [:b {:xml/attr true} :string]]
            (sn/canonicalize-form
             [:map {:closed true}
@@ -59,15 +59,30 @@
              [:zz {} :string]
              [:a {:xml/attr true} :string]]))))
   (testing "element row order is load-bearing and is never touched"
-    (is (= [:map {} [:z {} :string] [:a {} :string]]
+    (is (= [:map [:z :string] [:a :string]]
            (sn/canonicalize-form [:map {} [:z {} :string] [:a {} :string]]))))
   (testing "seqex children keep their order"
-    (is (= [:cat {} [:z {} :string] [:a {} :string]]
+    (is (= [:cat [:z :string] [:a :string]]
            (sn/canonicalize-form [:cat {} [:z {} :string] [:a {} :string]]))))
   (testing "nested maps are canonicalized too"
-    (is (= [:cat {} [:map {} [:a {:xml/attr true} :string] [:b {:xml/attr true} :string]]]
+    (is (= [:cat [:map [:a {:xml/attr true} :string] [:b {:xml/attr true} :string]]]
            (sn/canonicalize-form
             [:cat {} [:map {} [:b {:xml/attr true} :string] [:a {:xml/attr true} :string]]])))))
+
+(deftest canonicalize-form-drops-empty-properties
+  (testing "empty property maps are dropped, as m/form does"
+    (is (= [:tuple [:enum :Foo] [:ref :ns/Foo]]
+           (sn/canonicalize-form [:tuple {} [:enum :Foo] [:ref :ns/Foo]]))))
+  (testing "populated properties are kept"
+    (is (= [:sequential {:min 1} [:ref :ns/Foo]]
+           (sn/canonicalize-form [:sequential {:min 1} [:ref :ns/Foo]]))))
+  (testing "a compiled schema agrees the two shapes are the same"
+    (is (= (m/form (m/schema [:tuple {} [:enum :Foo] :string]))
+           (m/form (m/schema (sn/canonicalize-form [:tuple {} [:enum :Foo] :string]))))))
+  (testing "data values are not schema forms and keep an empty map child"
+    (is (= [:enum {:value-documentation {"a" ["doc" {} "more"]}} "a"]
+           (sn/canonicalize-form
+            [:enum {:value-documentation {"a" ["doc" {} "more"]}} "a"])))))
 
 (deftest form-refs-collects-both-reference-shapes
   (let [registry-keys #{:ns/A :ns/B :org.w3.www.2001.XMLSchema/string}]

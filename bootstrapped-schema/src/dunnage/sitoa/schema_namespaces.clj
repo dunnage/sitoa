@@ -33,7 +33,7 @@
 (defn- attr-row? [row]
   (and (vector? row) (map? (second row)) (:xml/attr (second row))))
 
-(defn canonicalize-form
+(defn- sort-attribute-rows
   "Sort the :xml/attr rows of every :map form among themselves, reinserting them
   at the indexes attribute rows already occupied.
 
@@ -55,6 +55,36 @@
                         (map vector idxs sorted-attrs)))))
        x))
    form))
+
+(defn- drop-empty-properties
+  "Remove empty property maps, which malli treats as absent.
+
+  m/form normalizes them away, so every consumer written against serialized
+  registries - the shape serialize-registry produces - sees schema and entry
+  vectors without them. The pipeline emits the literal {} instead, and a
+  consumer that destructures a form positionally reads that as a child rather
+  than as properties. Emitting the normalized shape keeps generated source
+  interchangeable with the EDN it replaces.
+
+  Only vectors headed by a keyword or symbol are touched, so documentation and
+  :enum values, which are data rather than schema forms, are left alone."
+  [form]
+  (walk/postwalk
+   (fn [x]
+     (if (and (vector? x)
+              (< 1 (count x))
+              (= {} (nth x 1))
+              (or (keyword? (nth x 0)) (symbol? (nth x 0))))
+       (into (subvec x 0 1) (subvec x 2))
+       x))
+   form))
+
+(defn canonicalize-form
+  "Put a form in the shape the generator emits: attribute rows sorted, empty
+  property maps dropped. Attributes are sorted first, while :map forms still
+  carry their properties at index 1."
+  [form]
+  (-> form sort-attribute-rows drop-empty-properties))
 
 (defn canonicalize-registry
   "canonicalize-form over every registry value."
