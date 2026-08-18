@@ -60,14 +60,24 @@
 (defn- read-file [fixture path]
   (slurp (io/file (:out @fixture) path)))
 
-(deftest a-type-that-derives-from-nothing-is-plain-data
+(deftest a-type-that-derives-from-nothing-wraps-its-literal-form
+  ;; Every registry value is a self-contained IntoSchema. An underived type's
+  ;; reify wraps its literal form in m/schema, so it needs malli.core but not
+  ;; the derivation runtime and no base namespaces.
   (let [src (read-file support/multifile "types/example/BaseRecord.cljc")]
     (is (str/includes? src "(ns\n types.example.BaseRecord"))
-    (is (not (str/includes? src ":require")))
-    (is (not (str/includes? src "reify")))
+    (is (str/includes? src "[malli.core :as m]"))
+    (is (not (str/includes? src "dunnage.sitoa.xsd-to-malli.runtime")))
+    (is (str/includes? src "reify\n  m/IntoSchema"))
+    (testing "the literal lives in its own def, referenced by the reify - a
+              large literal inside the method body would blow the JVM's 64KB
+              method limit (FOP's block_List_FOP does)"
+      (is (re-find #"\(def\s+sch-form" src))
+      (is (str/includes? src "(m/schema sch-form options)"))
+      (is (re-find #"\(def\s+sch-seq-form" src)))
     (is (re-find #"\(def\s+deps" src))
     (is (re-find #"\(def\s+sch\s" src))
-    (is (re-find #"\(def\s+sch-seq" src))))
+    (is (re-find #"\(def\s+sch-seq\s" src))))
 
 (deftest a-derived-type-requires-its-base-and-builds-on-its-schema
   (let [src (read-file support/multifile "types/example/ExtendedRecord.cljc")]

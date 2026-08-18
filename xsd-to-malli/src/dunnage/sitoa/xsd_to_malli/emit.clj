@@ -8,6 +8,11 @@
   registry keyword, so the require graph is exactly the derivation graph and
   a cyclic XSD type graph still produces no cyclic requires.
 
+  Every registry value is emitted as a self-contained m/IntoSchema, uniformly:
+  a derived type's reify rebuilds it from its base, and an underived type's
+  reify wraps its literal form in m/schema. One contract for consumers -
+  registry values are schema constructors, never data to destructure.
+
   The canonicalization, naming, reachability and classpath helpers below are
   copied from dunnage.sitoa.schema-namespaces rather than required from it:
   that namespace imports XSOM, and nothing under src/ may put XSOM on this
@@ -206,16 +211,44 @@
         (map vector)
         ns-syms))
 
+(defn- registry-value-defs
+  "The defs for one registry value, always ending in a self-contained
+  m/IntoSchema named `sch-name`, so every generated registry value presents
+  the same contract.
+
+  The payload lives in its own def that the reify only references: a large
+  literal built inside the -into-schema method body blows the JVM's 64KB
+  method bytecode limit (FOP's block_List_FOP does), while the same literal
+  compiles fine as a top-level def. The payload def is also the data access
+  path for tooling: `<name>-plan` is a derivation plan, `<name>-form` a
+  malli form."
+  [sch-name x]
+  (if (compiler/derived? x)
+    (let [plan-name (symbol (str sch-name "-plan"))]
+      [(list 'def plan-name (->code (:plan x)))
+       (list 'def sch-name
+             (list 'reify 'm/IntoSchema
+                   (list '-into-schema '[_ _ _ options]
+                         (list 'rt/derive-complex plan-name 'options))))])
+    (let [form-name (symbol (str sch-name "-form"))]
+      [(list 'def form-name (->code x))
+       (list 'def sch-name
+             (list 'reify 'm/IntoSchema
+                   (list '-into-schema '[_ _ _ options]
+                         (list 'm/schema form-name 'options))))])))
+
 (defn- type-file-forms [ns-sym registry-keys {:keys [sch sch-seq] :as group}]
   (let [values (if (contains? group :sch-seq) [sch sch-seq] [sch])
         requires (derivation-requires values)]
-    (cond-> [(if (seq requires)
-               (list 'ns ns-sym generated-doc (seq (into [:require] (runtime-requires requires))))
-               (list 'ns ns-sym generated-doc))
-             (list 'def 'deps (form-refs registry-keys values))
-             (list 'def 'sch (->code sch))]
-      (contains? group :sch-seq)
-      (conj (list 'def 'sch-seq (->code sch-seq))))))
+    (into (into [(list 'ns ns-sym generated-doc
+                       (seq (into [:require]
+                                  (if (seq requires)
+                                    (runtime-requires requires)
+                                    ['[malli.core :as m]]))))
+                 (list 'def 'deps (form-refs registry-keys values))]
+                (registry-value-defs 'sch sch))
+          (when (contains? group :sch-seq)
+            (registry-value-defs 'sch-seq sch-seq)))))
 
 (defn- entry-file-forms [entry-ns own-keys included top-type]
   (let [arms (into [] (map (fn [[tag arm]] [tag (canonicalize-form arm)]))
