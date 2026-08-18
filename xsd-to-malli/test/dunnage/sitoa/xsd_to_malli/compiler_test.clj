@@ -117,7 +117,11 @@
         (is (= :own (:mode p)))
         (is (= 'types.example.BaseRecord/sch (:base p)))
         (is (nil? (:content-source p)))
-        (is (= [[:version {:xml/attr true} [:ref :types.example/codeType]]] (:attrs p)))))
+        (is (= [[:version {:xml/attr true} [:ref :types.example/codeType]]] (:attrs p)))
+        (testing "and the base's attribute keys travel with it - the emitter has
+                  no other way to know which of its own rows redeclare one, or
+                  whether any inherited row survives at all"
+          (is (= #{:createdBy :version} (:base-attr-keys p))))))
 
     (testing "simpleContent restriction keeps the base's value type"
       (let [p (plan :types.example/UsdPrice)]
@@ -167,7 +171,13 @@
       (let [p (get plans :org.w3.www.2001.XMLSchema/topLevelComplexType)]
         (is (= :own (:mode p)))
         (is (= :value-wrapped (:base-shape p)))
-        (is (= 'org.w3.www.2001.XMLSchema.complexType/sch (:base p)))))))
+        (is (= 'org.w3.www.2001.XMLSchema.complexType/sch (:base p)))))
+    (testing "an extension that adds only attributes records the head of the
+              content it inherits, which decides whether the derived type
+              assembles as a :merge or gets value-wrapped"
+      (let [p (get plans :org.w3.www.2001.XMLSchema/assertion)]
+        (is (= :base (:mode p)))
+        (is (= :map (:content-head p)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Loud failures

@@ -13,6 +13,8 @@
 (require '[clojure.java.io :as io]
          'clojure.xml
          '[dunnage.sitoa.xsd-to-malli.oracle :as oracle]
+         '[dunnage.sitoa.xsd-to-malli.compiler :as compiler]
+         '[dunnage.sitoa.xsd-to-malli.runtime :as rt]
          '[dunnage.sitoa.bootstrapped-schema :as bs]
          '[dunnage.sitoa.parser :as parser]
          '[dunnage.sitoa.unparser :as unparser]
@@ -21,6 +23,8 @@
 (import '(java.io StringReader))
 
 (def tree-path "target/xsd-to-malli-test/xmlschema-clean/src")
+(def plans-path "target/xsd-to-malli-test/xmlschema-clean/derived-plans.edn")
+(def hosts-path "target/xsd-to-malli-test/xmlschema-clean/embedded-hosts.edn")
 
 ;; 1. Prove the classpath serves the emitted tree, not generated-src.
 (let [res (str (.getResource (clojure.lang.RT/baseLoader)
@@ -40,6 +44,54 @@
   (assert (pos? (count into-schemas)) "no IntoSchema values - vacuous")
   (assert (instance? malli.core.IntoSchema
                      (get reg :org.w3.www.2001.XMLSchema/topLevelComplexType))))
+
+;; 2b. Every derived type's emitted chain builds what the interpreter builds.
+;;
+;; The plans come from the parent as EDN because the loader that would compile
+;; them here reads .xsd documents with the meta-schema this classpath replaces.
+(declare plan->interp)
+
+(defn resolve-value [x]
+  (cond
+    (compiler/derived? x) (plan->interp (:plan x))
+    (map? x) (into (empty x) (map (fn [[k v]] [k (resolve-value v)])) x)
+    (vector? x) (mapv resolve-value x)
+    (set? x) (into (empty x) (map resolve-value) x)
+    :else x))
+
+(defn resolve-plan [plan]
+  (let [p (resolve-value plan)]
+    (cond-> p
+      (symbol? (:base p)) (assoc :base @(requiring-resolve (:base p)))
+      (symbol? (:content-source p)) (assoc :content-source
+                                           @(requiring-resolve (:content-source p))))))
+
+(defn plan->interp [plan]
+  (reify m/IntoSchema
+    (-into-schema [_ _ _ options] (rt/derive-complex (resolve-plan plan) options))))
+
+(defn key-form [registry k]
+  (m/form (m/deref (m/deref (m/schema [:schema {:registry registry} k]
+                                      xml-primitives/external-registry)))))
+
+(defn parity [registry pairs]
+  (let [results (mapv (fn [[k v]]
+                        (let [old (key-form (assoc registry k v) k)]
+                          [k (and (vector? old) (= old (key-form registry k)))]))
+                      pairs)
+        bad (into [] (comp (remove second) (map first)) results)]
+    (assert (pos? (count results)) "nothing to compare - vacuous")
+    (assert (empty? bad) (str "chain differs from the interpreter: " (pr-str bad)))
+    [(- (count results) (count bad)) (count results)]))
+
+(let [registry @(resolve 'dunnage.sitoa.gen.xmlschema/registry)
+      [ok n] (parity registry (mapv (fn [[k plan]] [k (plan->interp plan)])
+                                    (read-string (slurp plans-path))))
+      ;; and the same for values that merely EMBED an anonymous derived type
+      [hok hn] (parity registry (mapv (fn [[k v]] [k (resolve-value v)])
+                                      (read-string (slurp hosts-path))))]
+  (println (format "DERIVED-PARITY: %d/%d" ok n))
+  (println (format "EMBEDDED-HOST-PARITY: %d/%d" hok hn)))
 
 ;; 3. Build both sides.
 (def gen-registry @(resolve 'dunnage.sitoa.gen.xmlschema/registry))

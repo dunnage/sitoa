@@ -18,6 +18,8 @@
             [clojure.test :refer [deftest is testing]]
             [dunnage.sitoa.parser :as parser]
             [dunnage.sitoa.xml-primitives :as xml-primitives]
+            [dunnage.sitoa.xsd-to-malli.compiler :as compiler]
+            [dunnage.sitoa.xsd-to-malli.emit :as emit]
             [dunnage.sitoa.xsd-to-malli.support :as support]
             [malli.core :as m]))
 
@@ -149,9 +151,37 @@
   ;; parse-equality / fixpoint / validate-agreement bar and fails loudly if the
   ;; classpath would shadow) in a child JVM. The tree path is shared with the
   ;; harness; keep them in sync.
-  (let [tree "target/xsd-to-malli-test/xmlschema-clean/src"]
-    (support/emit-into! (io/file ".." "bootstrapped-schema" "dev-resources" "XMLSchema.xsd")
-                        "xsd" tree 'dunnage.sitoa.gen.xmlschema)
+  ;;
+  ;; The same JVM is where XMLSchema's 70 derived types get their old-vs-new
+  ;; m/form parity check (derived-parity-test covers the other fixtures). The
+  ;; child cannot compile the XSD itself - the loader reads .xsd documents with
+  ;; the meta-schema under generated-src, which is exactly what this classpath
+  ;; replaces - so the plans travel as EDN.
+  (let [tree "target/xsd-to-malli-test/xmlschema-clean/src"
+        plans-file "target/xsd-to-malli-test/xmlschema-clean/derived-plans.edn"
+        hosts-file "target/xsd-to-malli-test/xmlschema-clean/embedded-hosts.edn"
+        result (support/emit-into! (io/file ".." "bootstrapped-schema" "dev-resources" "XMLSchema.xsd")
+                                   "xsd" tree 'dunnage.sitoa.gen.xmlschema)
+        registry (:registry (:compiled result))
+        plans (into (sorted-map)
+                    (comp (filter (fn [[_ v]] (compiler/derived? (:emit v))))
+                          (map (fn [[k v]] [k (:plan (emit/canonicalize-form (:emit v)))])))
+                    registry)
+        ;; values that are not themselves derived but embed an anonymous
+        ;; derived type, so the child can check those chains in place too
+        hosts (into (sorted-map)
+                    (comp (remove (fn [[_ v]] (compiler/derived? (:emit v))))
+                          (filter (fn [[_ v]] (some compiler/derived?
+                                                    (tree-seq coll? seq (:emit v)))))
+                          (map (fn [[k v]] [k (emit/canonicalize-form (:emit v))])))
+                    registry)]
+    (is (= 70 (count plans)))
+    (is (= 18 (count hosts)))
+    (spit (io/file plans-file) (pr-str plans))
+    (spit (io/file hosts-file) (pr-str hosts))
+    (is (= plans (read-string (slurp plans-file)))
+        "the plans survive the trip to the child JVM")
+    (is (= hosts (read-string (slurp hosts-file))))
     (let [deps (str "{:aliases {:clean {:replace-paths [\"src\" \"resources\" \"" tree "\"]}}}")
           pb (ProcessBuilder.
               ["clojure" "-Sdeps" deps "-M:clean:test"
@@ -161,4 +191,6 @@
           out (slurp (.getInputStream proc))
           exit (.waitFor proc)]
       (is (zero? exit) out)
+      (is (.contains ^String out "DERIVED-PARITY: 70/70") out)
+      (is (.contains ^String out "EMBEDDED-HOST-PARITY: 18/18") out)
       (is (.contains ^String out "XMLSCHEMA-CLEAN-CLASSPATH: PASS") out))))

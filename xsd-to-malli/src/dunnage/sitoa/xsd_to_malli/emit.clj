@@ -13,6 +13,14 @@
   reify wraps its literal form in m/schema. One contract for consumers -
   registry values are schema constructors, never data to destructure.
 
+  A derivation is written out as compiled code, not as data: a `->` chain of
+  malli.util operations over the pieces dunnage.sitoa.xsd-to-malli.derive pulls
+  out of the base's schema, so a reader sees the derivation - assoc this
+  attribute, dissoc that prohibited one, merge in this content - rather than a
+  plan only an interpreter could read. A derived type's file keeps its base
+  require even when its chain never names the base, because the require graph
+  is the derivation graph.
+
   The canonicalization, naming, reachability and classpath helpers below are
   copied from dunnage.sitoa.schema-namespaces rather than required from it:
   that namespace imports XSOM, and nothing under src/ may put XSOM on this
@@ -22,6 +30,7 @@
             [clojure.string :as str]
             [clojure.walk :as walk]
             [dunnage.sitoa.xsd-to-malli.compiler :as compiler]
+            [dunnage.sitoa.xsd-to-malli.derive :as derive]
             [dunnage.sitoa.xsd-to-malli.loader :as loader]
             [dunnage.sitoa.xml-primitives :as xml-primitives]
             [fipp.edn :refer [pprint] :rename {pprint fipp}])
@@ -163,24 +172,177 @@
 ;; Derivation nodes -> code
 ;; ---------------------------------------------------------------------------
 
+(declare derived-chain)
+
 (defn- ->code
   "Replace every derivation node in a value by the expression that rebuilds it.
 
   Each node becomes a self-contained IntoSchema, so it works wherever it lands:
   as a whole registry value, as a child inside a literal form, or as the type
   of a top-type arm - malli builds it with the options that carry the assembled
-  registry, which is what its [:ref ...] children need."
+  registry, which is what its [:ref ...] children need.
+
+  A node reached this way is nested inside another value and has no namespace
+  of its own to hoist payloads into, so its chain carries its literals inline -
+  which is where the plan literal it replaces sat as well, so the method-size
+  profile is unchanged."
   [x]
   (cond
     (compiler/derived? x)
     (list 'reify 'm/IntoSchema
           (list '-into-schema '[_ _ _ options]
-                (list 'rt/derive-complex (->code (:plan x)) 'options)))
+                (:body (derived-chain nil (:plan x)))))
 
     (map? x) (into (empty x) (map (fn [[k v]] [(->code k) (->code v)])) x)
     (vector? x) (mapv ->code x)
     (set? x) (into (empty x) (map ->code) x)
     :else x))
+
+;; ---------------------------------------------------------------------------
+;; Derivation plans -> malli.util chains
+;; ---------------------------------------------------------------------------
+
+(defn- attr-value-inline?
+  "Attribute values a chain can carry in its method body: a registry keyword or
+  a [:ref kw]. Both are bounded by construction; an anonymous simpleType
+  enumerating thousands of codes is not, and goes to its own def."
+  [v]
+  (or (keyword? v)
+      (and (vector? v) (= 2 (count v)) (= :ref (nth v 0)) (keyword? (nth v 1)))))
+
+(defn- attr-def-name
+  "Def name for a hoisted attribute value. Attribute keys are unique within one
+  type, and the sch-/sch-seq- prefix keeps the two duals apart."
+  [sch-name k]
+  (symbol (str sch-name "-attr-" (str/replace (str (symbol k)) #"[^a-zA-Z0-9]" "_"))))
+
+(defn- derived-chain
+  "The defs and the -into-schema body for one derivation plan.
+
+  Returns {:hoists [[name literal] ...] :body <code>}. `sch-name` names the
+  registry value the chain belongs to and turns hoisting on; nil emits
+  everything inline, which is what an anonymous node nested inside another
+  value needs.
+
+  The plan must already be CANONICAL (canonicalize-form). The interpreter this
+  replaces dropped empty property maps over the whole assembled form at build
+  time and so silently forgave an uncanonical literal; a chain hands its
+  literals to m/schema as they stand, and m/form keeps empty entry properties,
+  so an uncanonical plan would change the schema.
+
+  The assembly mirrors runtime/assemble-complex, whose cond decides in this
+  order: with an attribute map, simple content beats mixed content beats the
+  content particle - so a mixed derivation value-wraps :xml/hiccup and drops
+  its content in EVERY mode, and the content it would have built is not
+  emitted at all. Without an attribute map mixed content is inert."
+  [sch-name {:keys [base base-attr-keys attrs drop-attrs mixed? mode own-content
+                    content-source content-shape content-head simple empty?]
+             :as plan}]
+  (let [top? (some? sch-name)
+        attrs (vec attrs)
+        base-attr-keys (set base-attr-keys)
+        own-keys (mapv first attrs)
+        redeclared (into (set drop-attrs) own-keys)
+        ;; whether this type ends up with an attribute map at all is decided by
+        ;; the rows that SURVIVE: a restriction can prohibit every inherited row
+        final-attrs? (boolean (or (seq attrs) (seq (remove redeclared base-attr-keys))))
+        content? (case mode
+                   :own (some? own-content)
+                   :base (not (contains? #{:attrs-only :empty} content-shape))
+                   (:splice-map :splice-cat) true
+                   false)
+        kind (cond
+               (some? simple) :simple
+               (and final-attrs? mixed?) :mixed
+               content? :content
+               final-attrs? :attrs
+               empty? :empty
+               :else (throw (ex-info "derivation assembles neither attributes nor content"
+                                     {:type :xsd-to-malli/empty-derivation :plan plan})))
+        own-content? (and (= :content kind) (some? own-content))
+        simple-literal? (and (= :simple kind) (not= :from-base simple))
+        value-name (symbol (str sch-name "-value"))
+        content-name (symbol (str sch-name "-content"))
+        hoists (cond-> (into []
+                             (keep (fn [row]
+                                     (let [v (peek row)]
+                                       (when (and top? (not (attr-value-inline? v)))
+                                         [(attr-def-name sch-name (first row)) (->code v)]))))
+                             attrs)
+                 (and top? simple-literal?) (conj [value-name (->code simple)])
+                 (and top? own-content?) (conj [content-name (->code own-content)]))
+        ;; attr-def-name munges punctuation to '_', so distinct attribute keys
+        ;; can collide on one def name; a later def would silently shadow the
+        ;; earlier one and both mu/assoc sites would bind the last literal.
+        _ (let [dupes (into (sorted-map)
+                            (filter (fn [[_ v]] (< 1 v)))
+                            (frequencies (map first hoists)))]
+            (when (seq dupes)
+              (throw (ex-info "hoisted def names collide after munging"
+                              {:type :xsd-to-malli/hoist-name-collision
+                               :sch-name sch-name :names (vec (keys dupes))}))))
+        ;; the base is let-bound when the attribute thread and the tail both
+        ;; read the same exported value; otherwise each names its own
+        let? (and final-attrs?
+                  (case kind
+                    :simple (= :from-base simple)
+                    :content (= content-source base)
+                    false))
+        sym-expr (fn [sym] (if (and let? (= sym base)) 'base (list 'm/schema sym 'options)))
+        own-expr (list 'm/schema (if top? content-name (->code own-content)) 'options)
+        value-expr (list 'm/schema (if top? value-name (->code simple)) 'options)
+        simple-expr (if (= :from-base simple)
+                      (list 'xd/content (sym-expr base))
+                      value-expr)
+        source-expr (list 'xd/content (sym-expr content-source))
+        ;; :map and :merge content assembles as a :merge; anything else - a
+        ;; seqex, a ref, a bare type - is value-wrapped
+        merge-content? (case mode
+                         :own (contains? #{:map :merge} (derive/form-tag own-content))
+                         :base (contains? #{:map :merge} content-head)
+                         :splice-map true
+                         false)]
+    {:hoists hoists
+     :body
+     (if final-attrs?
+       (let [ops (into (into [] (map (fn [k] (list 'mu/dissoc k)))
+                             (into (vec (sort drop-attrs)) (filter base-attr-keys) own-keys))
+                       (map (fn [row]
+                              (let [k (first row)
+                                    props (when (= 3 (count row)) (nth row 1))
+                                    v (peek row)]
+                                (list 'mu/assoc
+                                      (if (seq props) [k props] k)
+                                      (if (and top? (not (attr-value-inline? v)))
+                                        (attr-def-name sch-name k)
+                                        (->code v))))))
+                       attrs)
+             tail (case kind
+                    :simple [(list 'xd/value-wrapped simple-expr)]
+                    :mixed [(list 'xd/value-wrapped :xml/hiccup)]
+                    :attrs []
+                    :content (case mode
+                               :own [(list (if merge-content? 'xd/entries-merge 'xd/value-wrapped)
+                                           own-expr)]
+                               :base [(list (if merge-content? 'xd/entries-merge 'xd/value-wrapped)
+                                            source-expr)]
+                               :splice-map [(list 'xd/entries-merge source-expr own-expr)]
+                               :splice-cat [(list 'xd/value-wrapped [:cat source-expr own-expr])]))
+             thread (cons '-> (into (if let?
+                                      [(list 'xd/attrs 'base)]
+                                      [(list 'm/schema base 'options) 'xd/attrs])
+                                    (concat ops tail)))]
+         (if let?
+           (list 'let ['base (list 'm/schema base 'options)] thread)
+           thread))
+       (case kind
+         :simple simple-expr
+         :content (case mode
+                    :own own-expr
+                    :base source-expr
+                    :splice-map (list 'xd/entries-merge source-expr own-expr)
+                    :splice-cat (list 'm/schema [:cat source-expr own-expr] 'options))
+         :empty (list 'm/schema [:map {:empty true}] 'options)))}))
 
 (defn- derivation-requires
   "Namespaces a compiled value has to require: the base namespaces its
@@ -205,11 +367,28 @@
       (fipp form {:writer w})))
   (.getPath f))
 
-(defn- runtime-requires [ns-syms]
-  (into ['[dunnage.sitoa.xsd-to-malli.runtime :as rt]
-         '[malli.core :as m]]
-        (map vector)
-        ns-syms))
+(defn- alias-namespaces
+  "Namespace strings the qualified symbols in a piece of generated code use."
+  [code]
+  (into #{} (comp (filter symbol?) (keep namespace)) (tree-seq coll? seq code)))
+
+(defn- code-requires
+  "Require entries for a generated file: malli.core always, malli.util and the
+  derivation vocabulary only when the code names them, then the base
+  namespaces.
+
+  A base namespace stays required even when the chain never mentions it - the
+  no-attribute restrictions that dominate large schemas restate their content
+  and read nothing off the base - because the require graph is the derivation
+  graph and that is worth more than dropping an unused require."
+  [code base-ns-syms]
+  (let [used (alias-namespaces code)]
+    (into (cond-> []
+            (contains? used "xd") (conj '[dunnage.sitoa.xsd-to-malli.derive :as xd])
+            :always (conj '[malli.core :as m])
+            (contains? used "mu") (conj '[malli.util :as mu]))
+          (map vector)
+          base-ns-syms)))
 
 (defn- registry-value-defs
   "The defs for one registry value, always ending in a self-contained
@@ -219,17 +398,18 @@
   The payload lives in its own def that the reify only references: a large
   literal built inside the -into-schema method body blows the JVM's 64KB
   method bytecode limit (FOP's block_List_FOP does), while the same literal
-  compiles fine as a top-level def. The payload def is also the data access
-  path for tooling: `<name>-plan` is a derivation plan, `<name>-form` a
-  malli form."
+  compiles fine as a top-level def. An underived type's whole form is such a
+  payload (`<name>-form`); a derived type's are the two literals that grow
+  without bound - the content a restriction restates (`<name>-content`), the
+  value type a simpleContent restriction narrows to (`<name>-value`) - and any
+  attribute value bigger than a keyword or a [:ref kw]."
   [sch-name x]
   (if (compiler/derived? x)
-    (let [plan-name (symbol (str sch-name "-plan"))]
-      [(list 'def plan-name (->code (:plan x)))
-       (list 'def sch-name
-             (list 'reify 'm/IntoSchema
-                   (list '-into-schema '[_ _ _ options]
-                         (list 'rt/derive-complex plan-name 'options))))])
+    (let [{:keys [hoists body]} (derived-chain sch-name (:plan x))]
+      (conj (into [] (map (fn [[n literal]] (list 'def n literal))) hoists)
+            (list 'def sch-name
+                  (list 'reify 'm/IntoSchema
+                        (list '-into-schema '[_ _ _ options] body)))))
     (let [form-name (symbol (str sch-name "-form"))]
       [(list 'def form-name (->code x))
        (list 'def sch-name
@@ -239,28 +419,28 @@
 
 (defn- type-file-forms [ns-sym registry-keys {:keys [sch sch-seq] :as group}]
   (let [values (if (contains? group :sch-seq) [sch sch-seq] [sch])
-        requires (derivation-requires values)]
-    (into (into [(list 'ns ns-sym generated-doc
-                       (seq (into [:require]
-                                  (if (seq requires)
-                                    (runtime-requires requires)
-                                    ['[malli.core :as m]]))))
-                 (list 'def 'deps (form-refs registry-keys values))]
-                (registry-value-defs 'sch sch))
-          (when (contains? group :sch-seq)
-            (registry-value-defs 'sch-seq sch-seq)))))
+        defs (into (registry-value-defs 'sch sch)
+                   (when (contains? group :sch-seq)
+                     (registry-value-defs 'sch-seq sch-seq)))]
+    (into [(list 'ns ns-sym generated-doc
+                 (seq (into [:require] (code-requires defs (derivation-requires values)))))
+           (list 'def 'deps (form-refs registry-keys values))]
+          defs)))
 
 (defn- entry-file-forms [entry-ns own-keys included top-type]
   (let [arms (into [] (map (fn [[tag arm]] [tag (canonicalize-form arm)]))
                    (sort-by first (drop 2 top-type)))
         ns-syms (into (sorted-set) (map (comp kw->ns-sym #(base-kw own-keys %))) included)
-        code-requires (derivation-requires arms)
-        requires (into (into [:require
-                              '[dunnage.sitoa.xml-primitives :as xml-primitives]
-                              '[dunnage.sitoa.xsd-to-malli.runtime :as rt]]
-                             (when (seq code-requires) ['[malli.core :as m]]))
+        arm-requires (derivation-requires arms)
+        arm-code (->code arms)
+        used (alias-namespaces arm-code)
+        requires (into (cond-> [:require
+                                '[dunnage.sitoa.xml-primitives :as xml-primitives]
+                                '[dunnage.sitoa.xsd-to-malli.derive :as xd]]
+                         (contains? used "m") (conj '[malli.core :as m])
+                         (contains? used "mu") (conj '[malli.util :as mu]))
                        (map vector)
-                       (into ns-syms code-requires))
+                       (into ns-syms arm-requires))
         reg-entries (into (sorted-map)
                           (map (fn [k]
                                  (let [bk (base-kw own-keys k)]
@@ -271,14 +451,14 @@
      (list 'def 'registry
            (list 'merge 'xml-primitives/xmlschema-registry reg-entries))
      (list 'def 'top-type
-           (list 'into [:multi {:dispatch 'first}] (->code arms)))
+           (list 'into [:multi {:dispatch 'first}] arm-code))
      (list 'defn 'make-schema
            (list [] (list 'make-schema 'top-type))
            (list '[start-type] (list 'xml-primitives/make-schema 'registry 'start-type)))
      (list 'defn 'closed-make-schema
            (list [] (list 'closed-make-schema 'top-type))
            (list '[start-type] (list 'xml-primitives/closed-make-schema
-                                     (list 'rt/realize-registry 'registry)
+                                     (list 'xd/realize-registry 'registry)
                                      'start-type)))]))
 
 (defn- group-entries

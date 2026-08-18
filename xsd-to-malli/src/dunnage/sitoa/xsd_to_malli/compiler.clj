@@ -953,6 +953,11 @@
         mixed? (complex-mixed? ctx ty)
         common {:base (sch-sym (:kw base) false)
                 :base-shape base-shape
+                ;; the emitter decides statically whether this type ends up
+                ;; with an attribute map at all, and which of its own rows
+                ;; redeclare an inherited one; the base's flat form is here and
+                ;; nowhere downstream
+                :base-attr-keys (into (sorted-set) (map first) (rt/attrs-of base-form base-shape))
                 :attrs attrs
                 :drop-attrs drop-attrs
                 :mixed? mixed?}
@@ -976,12 +981,18 @@
 
       ;; extension
       (nil? own-particle)
-      (assoc common
-             :mode (if (= :empty (:kind base-model)) :none :base)
-             :content-source (sch-sym (:kw base) seq?)
-             :content-shape (rt/shape-of (compile-complex (flat-ctx ctx) base))
-             :content-dep (if seq? (seq-kw (:kw base)) (:kw base))
-             :empty? (= :empty (:kind base-model)))
+      (let [source-form (compile-complex (flat-ctx ctx) base)
+            source-shape (rt/shape-of source-form)]
+        (assoc common
+               :mode (if (= :empty (:kind base-model)) :none :base)
+               :content-source (sch-sym (:kw base) seq?)
+               :content-shape source-shape
+               ;; :map / :merge content assembles as a :merge, anything else is
+               ;; value-wrapped; the emitter cannot see the base's form, so the
+               ;; head of the content it will inherit is recorded here
+               :content-head (rt/form-tag (rt/content-of source-form source-shape))
+               :content-dep (if seq? (seq-kw (:kw base)) (:kw base))
+               :empty? (= :empty (:kind base-model))))
 
       (= :empty (:kind base-model))
       (assoc common

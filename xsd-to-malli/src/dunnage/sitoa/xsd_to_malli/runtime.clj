@@ -1,97 +1,35 @@
 (ns dunnage.sitoa.xsd-to-malli.runtime
   "Schema assembly shared by the compiler and by the code it generates.
 
-  Everything here is a pure function over malli FORMS, plus one entry point,
-  `derive-complex`, that generated namespaces call at schema-build time. A
-  derived type's file requires its base type's namespace and hands the base's
-  `sch` to `derive-complex`, which reads the base's rows out of it and rebuilds
-  the derived type around them. Nothing about the base is copied into the
-  generated source, so the derivation is modelled rather than flattened.
+  Everything here is a pure function over malli FORMS. The compiler runs these
+  functions over the compiled forms at generation time, which is what makes the
+  generated schema and the XSOM pipeline agree, and `derive-complex` runs the
+  same rules over a derivation plan - the executable specification the emitted
+  `->` chains are checked against.
 
   The assembly rules are ports of dunnage.sitoa.bootstrapped-schema, cited per
-  function. The compiler runs the same functions over the same forms at
-  generation time, which is what makes the generated schema and the XSOM
-  pipeline agree."
+  function.
+
+  The form accessors and the choice promotion live in
+  dunnage.sitoa.xsd-to-malli.derive, which generated code requires and which
+  therefore may not depend on anything here; they are aliased back below so
+  every caller keeps one name for each."
   (:require [malli.core :as m]
-            [dunnage.sitoa.xml-primitives :as xml-primitives]))
+            [dunnage.sitoa.xsd-to-malli.derive :as derive]))
 
 ;; ---------------------------------------------------------------------------
-;; Form access
-;;
-;; Forms reach these functions from two directions: the compiler builds them
-;; with an explicit properties map, and m/form hands them back without one when
-;; the properties are empty. Every accessor tolerates both.
+;; Form access and complex type shapes, aliased from the generated-code
+;; namespace that owns them
 ;; ---------------------------------------------------------------------------
 
-(defn form-tag [form]
-  (when (and (vector? form) (seq form)) (nth form 0)))
-
-(defn form-props [form]
-  (when (and (vector? form) (< 1 (count form)) (map? (nth form 1)))
-    (nth form 1)))
-
-(defn form-children [form]
-  (let [form (vec form)]
-    (if (form-props form) (subvec form 2) (subvec form 1))))
-
-(defn attr-row? [row]
-  (and (vector? row) (map? (second row)) (:xml/attr (second row))))
-
-(defn value-row? [row]
-  (and (vector? row) (= :xml/value (nth row 0))))
-
-;; ---------------------------------------------------------------------------
-;; Complex type shapes
-;;
-;; A compiled complex type is one of five shapes, decided by whether it has
-;; attributes and what its content is (bootstrapped_schema.clj lines 650-679).
-;; Derivation needs to pull the base's attribute rows and content back out, and
-;; the shape says where they are.
-;; ---------------------------------------------------------------------------
-
-(defn shape-of [form]
-  (cond
-    (not (vector? form)) :content-only
-
-    (= :merge (form-tag form))
-    (let [first-part (first (form-children form))
-          rows (when (and (vector? first-part) (= :map (form-tag first-part)))
-                 (form-children first-part))]
-      ;; The attribute map is always the first part of the :merge and holds
-      ;; nothing but attribute rows; a :merge of content maps never does.
-      (if (and (seq rows) (every? attr-row? rows)) :merge :content-only))
-
-    (= :map (form-tag form))
-    (let [props (or (form-props form) {})
-          rows (form-children form)]
-      (cond
-        (:empty props) :empty
-        (:xml/value-wrapped props) :value-wrapped
-        (and (seq rows) (every? attr-row? rows)) :attrs-only
-        :else :content-only))
-
-    :else :content-only))
-
-(defn attrs-of
-  "Attribute rows of a compiled complex type form."
-  [form shape]
-  (case shape
-    :merge (vec (form-children (first (form-children form))))
-    :value-wrapped (into [] (remove value-row?) (form-children form))
-    :attrs-only (vec (form-children form))
-    []))
-
-(defn content-of
-  "Content form of a compiled complex type, or nil when it has none."
-  [form shape]
-  (case shape
-    :merge (let [parts (vec (form-children form))
-                 content (subvec parts 1)]
-             (if (= 1 (count content)) (first content) (into [:merge {}] content)))
-    :value-wrapped (some (fn [row] (when (value-row? row) (peek row))) (form-children form))
-    :attrs-only nil
-    :empty nil
-    form))
+(def form-tag derive/form-tag)
+(def form-props derive/form-props)
+(def form-children derive/form-children)
+(def attr-row? derive/attr-row?)
+(def value-row? derive/value-row?)
+(def shape-of derive/shape-of)
+(def attrs-of derive/attrs-of)
+(def content-of derive/content-of)
 
 ;; ---------------------------------------------------------------------------
 ;; Particle assembly (ports)
@@ -175,19 +113,7 @@
    nil
    x))
 
-(defn promote-value-choice-to-alt
-  "Port of bootstrapped_schema.clj lines 567-584."
-  [form]
-  (cond
-    (and (vector? form) (= :or (first form)))
-    (assoc form 0 :alt)
-    (and (vector? form) (#{:? :* :+ :repeat} (first form)))
-    (let [idx (dec (count form))]
-      (assoc form idx (promote-value-choice-to-alt (nth form idx))))
-    (and (vector? form) (= :sequential (first form)))
-    (assoc form (dec (count form))
-           (promote-value-choice-to-alt (last form)))
-    :else form))
+(def promote-value-choice-to-alt derive/promote-value-choice-to-alt)
 
 (defn value-wrap
   "Port of bootstrapped_schema.clj lines 586-591."
@@ -249,7 +175,13 @@
 (defn derive-complex
   "Build a derived complex type from its base type's schema.
 
-  `plan` is generated data describing what this derivation does; `:base` and
+  The executable specification of what a derived type's emitted chain has to
+  produce: derived_parity_test compares the m/form of every derived registry
+  value against what this function makes of the same plan. Generated code does
+  not call it - it carries its derivation as malli.util operations instead -
+  so this is the compiler's and the tests' entry point only.
+
+  `plan` is the compiler's description of what one derivation does; `:base` and
   `:content-source` hold the base namespace's exported schema values, which is
   the only place base rows come from.
 
@@ -264,7 +196,11 @@
     :drop-attrs      attribute keys this type prohibits
     :simple          compiled simple content, or :from-base
     :mixed?          effective mixed=\"true\"
-    :empty?          effective content model is empty"
+    :empty?          effective content model is empty
+
+  A plan also carries :base-attr-keys and :content-head, which only the emitter
+  reads: it decides statically what this function decides from the base's form
+  at build time."
   [{:keys [base base-shape content-source content-shape mode own-content
            splice-props attrs drop-attrs simple mixed? empty?]}
    options]
@@ -298,19 +234,4 @@
 ;; Registry realization
 ;; ---------------------------------------------------------------------------
 
-(defn realize-registry
-  "Compile every registry value against the whole registry.
-
-  xml-primitives/closed-make-schema maps mu/closed-schema over raw registry
-  VALUES, which works for literal forms but not for the IntoSchema values a
-  derived type exports: compiled outside the registry, their [:ref ...] children
-  have nothing to resolve against. Realizing first hands closed-make-schema
-  plain schemas."
-  [registry]
-  (persistent!
-   (reduce-kv
-    (fn [acc k _]
-      (assoc! acc k (m/deref (m/schema [:schema {:registry registry} k]
-                                       xml-primitives/external-registry))))
-    (transient {})
-    registry)))
+(def realize-registry derive/realize-registry)

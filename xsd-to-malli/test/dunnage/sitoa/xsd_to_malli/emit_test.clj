@@ -80,15 +80,36 @@
     (is (re-find #"\(def\s+sch-seq\s" src))))
 
 (deftest a-derived-type-requires-its-base-and-builds-on-its-schema
+  ;; A derivation is written out as code, not as data: a `->` chain of
+  ;; malli.util operations over the pieces xd pulls off the base's schema.
   (let [src (read-file support/multifile "types/example/ExtendedRecord.cljc")]
     (is (str/includes? src "[types.example.BaseRecord]"))
-    (is (str/includes? src "[dunnage.sitoa.xsd-to-malli.runtime :as rt]"))
+    (is (str/includes? src "[dunnage.sitoa.xsd-to-malli.derive :as xd]"))
     (is (str/includes? src "[malli.core :as m]"))
+    (is (str/includes? src "[malli.util :as mu]"))
+    (is (not (str/includes? src "dunnage.sitoa.xsd-to-malli.runtime")))
     (is (str/includes? src "reify\n  m/IntoSchema"))
-    (is (str/includes? src "rt/derive-complex"))
+    (testing "the chain reads as the derivation it is"
+      (is (str/includes? src "(xd/attrs base)"))
+      (is (str/includes? src "mu/assoc"))
+      (is (str/includes? src "xd/entries-merge"))
+      (is (str/includes? src "(xd/content base)")))
+    (testing "the restated content lives in its own def, as the 64KB limit wants"
+      (is (re-find #"\(def\s+sch-content" src))
+      (is (str/includes? src "(m/schema sch-content options)"))
+      (is (re-find #"\(def\s+sch-seq-content" src)))
     (testing "the base's rows are read from its schema, never copied in"
       (is (str/includes? src "types.example.BaseRecord/sch"))
       (is (not (str/includes? src ":createdBy"))))))
+
+(deftest a-redeclared-attribute-is-dropped-before-it-is-added-back
+  ;; mu/assoc replaces an existing entry IN PLACE, and derivation moves a
+  ;; redeclared row to the end of the attribute map, so the chain has to
+  ;; dissoc first.
+  (let [src (read-file support/multifile "types/example/StrictRecord.cljc")]
+    (is (str/includes? src "(mu/dissoc :version)"))
+    (is (< (str/index-of src "(mu/dissoc :version)")
+           (str/index-of src "[:version {:xml/attr true}]")))))
 
 (deftest the-entry-namespace-assembles-everything
   (let [src (read-file support/multifile "dunnage/sitoa/gen/multifile.cljc")]
@@ -99,14 +120,16 @@
     (is (re-find #"\(def\s+top-type" src))
     (is (re-find #"\(defn\s+make-schema" src))
     (testing "and closes over a realized registry, which reified values need"
-      (is (str/includes? src "rt/realize-registry")))))
+      (is (str/includes? src "xd/realize-registry"))
+      (is (not (str/includes? src "dunnage.sitoa.xsd-to-malli.runtime"))))))
 
 (deftest an-anonymous-derived-type-lands-inline-in-its-owner
   (let [src (read-file support/junit "dunnage/sitoa/gen/junit.cljc")]
     (testing "JUnit's testsuites arm nests an extension of testsuite"
       (is (str/includes? src "[junit.testsuite]"))
       (is (str/includes? src "junit.testsuite/sch"))
-      (is (str/includes? src "rt/derive-complex")))))
+      (is (str/includes? src "xd/attrs"))
+      (is (str/includes? src "xd/entries-merge")))))
 
 (deftest every-generated-namespace-loads-and-serves-its-registry-key
   (doseq [fixture support/all-fixtures]
