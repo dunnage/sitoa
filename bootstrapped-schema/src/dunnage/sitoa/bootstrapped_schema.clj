@@ -337,7 +337,12 @@
       (and repeated? (:content-particle context))
       (regex-occurrence min-occurs max-occurs msch)
       repeated?
-      [:sequential msch]
+      ;; Carry the XSD occurrence bounds so the seqex (*-seq) form remains
+      ;; derivable from the value form (:min 0/1+ -> :* / :+ / :repeat).
+      [:sequential (cond-> {:min (long min-occurs)}
+                     (not= max-occurs -1)
+                     (assoc :max (long max-occurs)))
+       msch]
       ;can-be-empty?
       ;[:maybe msch]
       :else
