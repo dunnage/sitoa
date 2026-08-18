@@ -80,6 +80,17 @@
       (is (str/includes? src "types.example.BaseRecord/sch"))
       (is (not (str/includes? src ":createdBy"))))))
 
+(deftest a-restriction-folds-to-plain-data-with-inheritance-resolved
+  ;; Broad rule: restriction restates, extension derives. StrictRecord is a
+  ;; complexContent restriction of BaseRecord, so its file is plain data with
+  ;; the inherited attribute row copied in statically - no reify, no requires.
+  (let [src (read-file support/multifile "types/example/StrictRecord.cljc")]
+    (is (not (str/includes? src "reify")))
+    (is (not (str/includes? src ":require")))
+    (is (str/includes? src ":createdBy"))
+    (is (re-find #"\(def\s+sch\s" src))
+    (is (re-find #"\(def\s+sch-seq" src))))
+
 (deftest the-entry-namespace-assembles-everything
   (let [src (read-file support/multifile "dunnage/sitoa/gen/multifile.cljc")]
     (is (re-find #"\(def\s+registry" src))

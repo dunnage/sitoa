@@ -38,8 +38,10 @@
   (println "own registry keys:" (count own)
            "IntoSchema values:" (count into-schemas))
   (assert (pos? (count into-schemas)) "no IntoSchema values - vacuous")
+  ;; annotated is an xs:extension of openAttrs; restrictions (topLevelComplexType
+  ;; and friends) fold to plain data under the restriction-restates rule.
   (assert (instance? malli.core.IntoSchema
-                     (get reg :org.w3.www.2001.XMLSchema/topLevelComplexType))))
+                     (get reg :org.w3.www.2001.XMLSchema/annotated))))
 
 ;; 3. Build both sides.
 (def gen-registry @(resolve 'dunnage.sitoa.gen.xmlschema/registry))

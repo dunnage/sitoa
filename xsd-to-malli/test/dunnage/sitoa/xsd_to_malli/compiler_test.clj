@@ -112,18 +112,25 @@
           (is (= {:closed true :xml/in-seq-ex true}
                  (:splice-props (plan :types.example/ExtendedRecord-seq)))))))
 
-    (testing "complexContent restriction inherits attributes and replaces content"
-      (let [p (plan :types.example/StrictRecord)]
-        (is (= :own (:mode p)))
-        (is (= 'types.example.BaseRecord/sch (:base p)))
-        (is (nil? (:content-source p)))
-        (is (= [[:version {:xml/attr true} [:ref :types.example/codeType]]] (:attrs p)))))
+    (testing "complexContent restriction folds: restriction restates, extension derives"
+      (let [e (get (:registry (:compiled @support/multifile)) :types.example/StrictRecord)]
+        (is (not (compiler/derived? (:emit e))))
+        (is (= (:form e) (:emit e)))
+        (testing "inherited attribute rows are resolved statically"
+          (is (= [:map {:closed true}
+                  [:version #:xml{:attr true} [:ref :types.example/codeType]]
+                  [:createdBy {:xml/attr true :optional true}
+                   [:ref :org.w3.www.2001.XMLSchema/string]]]
+                 (second (rest (:emit e))))))))
 
-    (testing "simpleContent restriction keeps the base's value type"
-      (let [p (plan :types.example/UsdPrice)]
-        (is (= :none (:mode p)))
-        (is (= 'types.example.Price/sch (:base p)))
-        (is (= :from-base (:simple p)))))
+    (testing "simpleContent restriction folds with the base's value type resolved statically"
+      (let [e (get (:registry (:compiled @support/multifile)) :types.example/UsdPrice)]
+        (is (not (compiler/derived? (:emit e))))
+        (is (= (:form e) (:emit e)))
+        (is (= [:map {:closed true :xml/value-wrapped true}
+                [:currency #:xml{:attr true} [:ref :types.example/codeType]]
+                [:xml/value {} :org.w3.www.2001.XMLSchema/decimal]]
+               (:emit e)))))
 
     (testing "simpleContent extension of a simple type is a reference, not code"
       (let [v (emitted support/multifile :types.example/Price)]
@@ -133,10 +140,8 @@
                 [:xml/value {} :org.w3.www.2001.XMLSchema/decimal]]
                v))))
 
-    (testing "nothing else in the fixture is derived"
-      (is (= #{:types.example/ExtendedRecord :types.example/ExtendedRecord-seq
-               :types.example/StrictRecord :types.example/StrictRecord-seq
-               :types.example/UsdPrice :types.example/UsdPrice-seq}
+    (testing "nothing else in the fixture is derived - restrictions fold to data"
+      (is (= #{:types.example/ExtendedRecord :types.example/ExtendedRecord-seq}
              (into #{}
                    (comp (filter (fn [[_ v]] (compiler/derived? (:emit v)))) (map key))
                    (:registry (:compiled @support/multifile))))))))
@@ -156,18 +161,19 @@
                           (map (fn [[k v]] [k (:plan (:emit v))])))
                     (:registry (:compiled @support/xmlschema)))
         modes (frequencies (map :mode (vals plans)))]
-    (is (= 70 (count plans)))
-    (testing "every derivation mode the compiler has is reached"
+    (is (= 28 (count plans)))
+    (testing "every extension mode the compiler has is reached"
       (is (= #{:splice-map :splice-cat :base :own} (set (keys modes))))
       (is (every? pos? (vals modes))))
     (testing "a seqex splice takes the base's -seq content"
       (is (= 'org.w3.www.2001.XMLSchema.annotated/sch-seq
              (:content-source (get plans :org.w3.www.2001.XMLSchema/complexType)))))
-    (testing "a restriction of a value-wrapped base keeps only its attribute rows"
-      (let [p (get plans :org.w3.www.2001.XMLSchema/topLevelComplexType)]
-        (is (= :own (:mode p)))
-        (is (= :value-wrapped (:base-shape p)))
-        (is (= 'org.w3.www.2001.XMLSchema.complexType/sch (:base p)))))))
+    (testing "restrictions fold even here: topLevelComplexType restates complexType"
+      (let [e (get (:registry (:compiled @support/xmlschema))
+                   :org.w3.www.2001.XMLSchema/topLevelComplexType)]
+        (is (not (compiler/derived? (:emit e))))
+        (testing "while anonymous extensions nested in its content stay code"
+          (is (some compiler/derived? (tree-seq coll? seq (:emit e)))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Loud failures
