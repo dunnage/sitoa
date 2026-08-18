@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="dunnage.sitoa.SampleTest" timestamp="2026-08-17T10:00:00" hostname="localhost" tests="2" failures="1" errors="0" skipped="0" time="0.125">
+  <properties>
+    <property name="java.version" value="21.0.2"/>
+    <property name="user.timezone" value="UTC"/>
+  </properties>
+  <testcase name="passes" classname="dunnage.sitoa.SampleTest" time="0.021"/>
+  <testcase name="fails" classname="dunnage.sitoa.SampleTest" time="0.104">
+    <failure message="expected 1 but was 2" type="java.lang.AssertionError">java.lang.AssertionError: expected 1 but was 2
+	at dunnage.sitoa.SampleTest.fails(SampleTest.java:42)</failure>
+  </testcase>
+  <system-out>ran two cases</system-out>
+  <system-err></system-err>
+</testsuite>

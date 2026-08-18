@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:example:types" xmlns:o="urn:example:other"
+           targetNamespace="urn:example:types" elementFormDefault="qualified">
+  <xs:include schemaLocation="types.xsd"/>
+  <xs:import namespace="urn:example:other" schemaLocation="other.xsd"/>
+  <xs:element name="record" type="t:ExtendedRecord"/>
+  <xs:element name="strict" type="t:StrictRecord"/>
+  <xs:element name="price" type="t:Price"/>
+  <xs:element name="score" type="o:scoreType"/>
+  <xs:element name="records" type="t:RecordList"/>
+</xs:schema>
