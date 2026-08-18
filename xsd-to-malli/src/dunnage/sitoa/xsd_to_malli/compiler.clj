@@ -8,21 +8,16 @@
   the streaming parser returns, so a plausible-looking difference is a bug.
 
   Derivation is the one deliberate departure. Where XSOM hands the oracle an
-  already-flattened content model for an xs:extension, this compiler keeps the
-  edge: it produces, per registry key, both
+  already-flattened content model for an xs:extension or xs:restriction, this
+  compiler keeps the edge: it produces, per registry key, both
 
     :form - the flattened form, used internally to decide shapes and -seq
             duals and to compare against the oracle, and
-    :emit - the value to write out, which for an extension-derived type is a
-            Derived node carrying a plan that rebuilds the type from its base
-            type's schema at schema-build time.
+    :emit - the value to write out, which for a derived type is a Derived node
+            carrying a plan that rebuilds the type from its base type's schema
+            at schema-build time.
 
-  xs:restriction never emits a Derived node: a complexContent restriction
-  restates its complete content model by spec, and its inherited attribute
-  rows and simpleContent value type are statically known here, so restriction
-  flattens exactly like the oracle. Restriction restates; extension derives.
-
-  For everything else the two are the same literal data."
+  For everything that is not derived the two are the same literal data."
   (:require [clojure.string :as str]
             [dunnage.sitoa.xml-primitives :as xml-primitives]
             [dunnage.sitoa.xsd-to-malli.ast :as ast]
@@ -806,7 +801,7 @@
 ;; Complex types: flattened form
 ;; ---------------------------------------------------------------------------
 
-(declare emit-derived extension-derived?)
+(declare emit-derived derived-complex?)
 
 (defn- simple-base-extension?
   "xs:simpleContent xs:extension of a SIMPLE type: the derivation adds
@@ -829,16 +824,12 @@
 (defn compile-complex
   "-mtype for a complex type.
 
-  With :emit? set, an EXTENSION-derived type becomes a Derived node instead of
-  its flattened form - that substitution is the point of the project.
-  Restriction falls through to the flat path: its content model is a complete
-  restatement by spec and its inherited attribute rows are statically known,
-  so deferring to schema-build time would compute nothing from the base while
-  making the registry value opaque to consumers that rewrite forms as data.
-  Without :emit? the result is flattened exactly like the oracle's, which is
-  what shape decisions and the differential comparison run on."
+  With :emit? set, a derived type becomes a Derived node instead of its
+  flattened form - that substitution is the whole point of the project. Without
+  it the result is flattened exactly like the oracle's, which is what shape
+  decisions and the differential comparison run on."
   [ctx ty]
-  (if (and (:emit? ctx) (extension-derived? ctx ty))
+  (if (and (:emit? ctx) (derived-complex? ctx ty))
     (if (simple-base-extension? ctx ty)
       (rt/assemble-complex
        {:attrs (attr-rows ctx (effective-attribute-uses ctx ty))
@@ -930,6 +921,13 @@
        :form (compile-complex (assoc ctx :sequence true) base)
        :dep (seq-kw (:kw base))})))
 
+(defn- restricts-value?
+  "Whether an xs:simpleContent xs:restriction narrows the value type rather
+  than only redeclaring attributes."
+  [derivation]
+  (boolean (or (ast/child (:step derivation) :simpleType)
+               (seq (filterv (comp facet-kinds :kind) (:children (:step derivation)))))))
+
 (defn- row-keys
   "Element tags a map-mode content form declares."
   [form]
@@ -960,12 +958,21 @@
                 :mixed? mixed?}
         base-model (content-model ctx base)]
     (cond
-      ;; Only extension reaches this plan builder - restriction flattens
-      ;; (compile-complex) - so simpleContent always inherits the value type.
       (= :simple (:content derivation))
       (assoc common
              :mode :none
-             :simple :from-base)
+             ;; The value type is inherited unless the restriction narrows it;
+             ;; a restriction that only redeclares attributes keeps the base's.
+             :simple (if (or (= :extension (:method derivation))
+                             (not (restricts-value? derivation)))
+                       :from-base
+                       (compile-simple ctx (simple-content-type ctx ty))))
+
+      (= :restriction (:method derivation))
+      (assoc common
+             :mode (if own-particle :own :none)
+             :own-content (handle-toplevel-particle ctx own-particle)
+             :empty? (nil? own-particle))
 
       ;; extension
       (nil? own-particle)
@@ -1038,13 +1045,6 @@
 (defn- derived-complex? [ctx ty]
   (and (not (simple-type? ty))
        (some? (:derivation (complex-parts ctx ty)))))
-
-(defn- extension-derived?
-  "True when emission should model this type as code deriving from its base.
-  Only xs:extension qualifies: restriction restates, extension derives."
-  [ctx ty]
-  (and (derived-complex? ctx ty)
-       (= :extension (:method (:derivation (complex-parts ctx ty))))))
 
 (defn- compile-registry-entry
   "Flattened form plus the value to emit, for one registry key."
