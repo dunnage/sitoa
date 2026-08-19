@@ -438,26 +438,14 @@
                  ;; Only *-seq may emit malli regex on arms; non-seq stays
                  ;; :or of bare tuples / :sequential. Multi-element sequence
                  ;; arms under :sequence still get :xml/in-seq-ex maps.
+                 ;; Discriminated :multi is derived from these choices by
+                 ;; or->multi below, as a load-time transform.
                  (into [(if (:sequence context)
                           :alt
                           :or)]
                        (keep #(group-particle (assoc context
                                                      :compositor "choice") %))
-                       fields)
-                 #_(let [part (reduce
-                               (fn [acc nv] (group-particle-seq
-                                             (assoc context
-                                                    :named-part false
-                                                    :compositor "choice") acc nv))
-                               []
-                               fields)]
-                     (if (every? (comp #{:tuple} first) part)
-                       #_(into [:multi {:dispatch 'first}]
-                               (keep (fn [[_tuple _args [_enum enum-value] t]]
-                                       [enum-value [:tuple :keyword t]]))
-                               part)
-                       (into [:or] part)
-                       (into [:or] part))))
+                       fields))
       "all" (cond
               (and (= 1 (count fields))
                    (instance? XSWildcard$Any (first fields)))
@@ -850,6 +838,188 @@
 
 (defn into-sorted-map [x]
   (into (sorted-map) x))
+
+;; Choice -> discriminated :multi
+
+(defn- form-head
+  "Head keyword of a schema form, or nil when the form is not a vector (registry
+  values may be bare keyword aliases)."
+  [form]
+  (when (vector? form)
+    (nth form 0 nil)))
+
+(defn- form-props
+  "Property map of a schema form, or nil when the form carries none."
+  [form]
+  (let [x (get form 1)]
+    (when (map? x) x)))
+
+(defn- form-children
+  "Children of a schema form, skipping the optional property map at index 1."
+  [form]
+  (if (map? (get form 1))
+    (subvec form 2)
+    (subvec form 1)))
+
+(defn leading-tag-dispatch
+  "Dispatch fn for the schemas produced by `or->multi`: returns the leading XML
+  tag keyword of a parsed value, or nil when there is none.
+
+  Parsed values are either a flat tuple `[:Tag v]` or a flat chunk
+  `[[:Tag v] ...]`: sitoa's `-cat-parser` treats `:cat`/`:alt` children as
+  inline data and splices their chunks FLAT into the parent accumulator, so even
+  a branch whose first child is a nested `:cat` parses to a flat chunk whose
+  first element is a tagged tuple. The descent past the second level is harmless
+  generality. Returning nil rather than throwing lets `:multi` report an invalid
+  value for input it cannot dispatch."
+  [v]
+  (loop [x (when (sequential? v) (first v))]
+    (cond
+      (keyword? x) x
+      (sequential? x) (recur (first x))
+      :else nil)))
+
+(defn keywordize-leading-tag
+  "`:decode/string` `:enter` hook for the schemas produced by `or->multi`:
+  keywordizes a string leading tag so `leading-tag-dispatch` can dispatch on
+  decoded input. Descends the leading position (`[0]`, `[0 0]`, deeper for
+  nested chunks) and passes everything else through untouched."
+  [v]
+  (if-not (vector? v)
+    v
+    (loop [path [0]
+           x    (nth v 0 nil)]
+      (cond
+        (string? x) (update-in v path keyword)
+        (vector? x) (recur (conj path 0) (nth x 0 nil))
+        :else v))))
+
+(defn- branch-key
+  "The XML start tag discriminating a single choice arm. `form` is the (possibly
+  nested) form under inspection, `arm` the enclosing arm kept for error context."
+  [form arm]
+  (case (form-head form)
+    :tuple
+    (let [enum-form (first (form-children form))]
+      (when-not (= :enum (form-head enum-form))
+        (throw (ex-info "or->multi: :tuple arm is not tagged with an [:enum tag]"
+                        {:reason :not-enum-tagged :form form :arm arm})))
+      (let [tags (form-children enum-form)]
+        (when-not (= 1 (count tags))
+          (throw (ex-info "or->multi: an [:enum ...] tag must hold exactly one tag"
+                          {:reason :multi-tag-enum :tags tags :form form :arm arm})))
+        (first tags)))
+
+    :cat
+    (let [children (form-children form)]
+      (when (empty? children)
+        (throw (ex-info "or->multi: empty :cat arm has no leading tag"
+                        {:reason :empty-cat :form form :arm arm})))
+      (recur (first children) arm))
+
+    (throw (ex-info "or->multi: arm has no fixed leading XML tag"
+                    {:reason :not-discriminable :head (form-head form)
+                     :form  form :arm arm}))))
+
+(defn- arm->branches
+  "Branch entries `[tag form]` contributed by one choice arm.
+
+  A `:cat` arm whose first child is an `:alt` is split into one branch per `:alt`
+  member; each branch keeps the arm's properties and its shared tail, and the
+  `[:cat ...]` wrapper is kept even when the tail is empty so the parse shape
+  stays a chunk. A member that is itself a `:cat` stays nested. Every other arm
+  yields a single branch holding the arm verbatim."
+  [arm]
+  (let [children   (when (= :cat (form-head arm)) (form-children arm))
+        head-child (first children)]
+    (if (= :alt (form-head head-child))
+      (let [props     (form-props arm)
+            alt-props (form-props head-child)
+            tail      (subvec children 1)]
+        ;; An empty property map is dropped losslessly; anything else would be
+        ;; silently lost by the split, so refuse it.
+        (when (seq alt-props)
+          (throw (ex-info "or->multi: cannot split an :alt that carries properties"
+                          {:reason :alt-properties :props alt-props :arm arm})))
+        (mapv (fn [member]
+                [(branch-key member arm)
+                 (into (if props [:cat props member] [:cat member]) tail)])
+              (form-children head-child)))
+      [[(branch-key arm arm) arm]])))
+
+(def ^:private or->multi-defaults
+  {:decode-string? true
+   :seqex-branches :throw})
+
+(defn or->multi
+  "Convert a discriminated choice form (an `:or`/`:alt` of element-tagged seqex
+  arms) into `[:multi {:dispatch leading-tag-dispatch
+                       :decode/string {:enter keywordize-leading-tag}} ...]`.
+
+  Branch keys are the XML start tags of the arms, and they MUST stay that way:
+  sitoa's serde parser (`-multi-parser`) ignores `:dispatch` entirely and looks
+  the XML start-tag keyword up directly among the branch keys. The unparser and
+  malli coercion are the ones that use `:dispatch`.
+
+  Original properties and arms are preserved verbatim; a `:cat` arm led by an
+  `:alt` is split into one branch per member, sharing the arm's tail.
+
+  The result contains fn objects, so it is NOT EDN-serializable: this is a
+  load-time transform, never something to serialize, and it must be applied
+  AFTER any `*-seq` derivation (the derivation does not descend into `:multi`).
+
+  Throws `ex-info` on arms with no fixed leading tag, on duplicate branch keys
+  (`:multi` would silently keep the last), and — by default — on `:alt`-headed
+  input that would produce a `:cat` branch, because an `:alt` chunk arm is
+  spliced inline while a `:multi` consumes exactly one slot.
+
+  opts:
+    :decode-string? (default true)    attach the `:decode/string` enter hook
+    :seqex-branches (default :throw)  `:allow` permits `:cat` branches from
+                                      `:alt`-headed input"
+  ([form] (or->multi form nil))
+  ([form opts]
+   (let [{:keys [decode-string? seqex-branches]} (merge or->multi-defaults opts)
+         head (form-head form)]
+     (when-not (or (= :or head) (= :alt head))
+       (throw (ex-info "or->multi: expects an :or or :alt choice form"
+                       {:reason :not-a-choice :head head :form form})))
+     (let [branches   (into [] (mapcat arm->branches) (form-children form))
+           duplicates (into []
+                            (comp (filter (fn [[_ n]] (< 1 n)))
+                                  (map first))
+                            (frequencies (map first branches)))]
+       (when (seq duplicates)
+         (throw (ex-info "or->multi: duplicate branch keys would collide in :multi"
+                         {:reason :duplicate-branch-keys :duplicates duplicates
+                          :form   form})))
+       (when (and (= :alt head)
+                  (= :throw seqex-branches)
+                  (some (fn [[_ branch]] (= :cat (form-head branch))) branches))
+         (throw (ex-info "or->multi: :alt input would produce :cat branches, which changes how the value is consumed"
+                         {:reason :seqex-branches :form form})))
+       (into [:multi (cond-> (assoc (or (form-props form) {})
+                                    :dispatch leading-tag-dispatch)
+                       decode-string?
+                       (assoc :decode/string {:enter keywordize-leading-tag}))]
+             branches)))))
+
+(defn or->multi-keys
+  "Apply `or->multi` to the named entries of a keyword->form registry map,
+  returning the updated registry. `opts` is passed through to `or->multi`.
+  Throws on keys absent from the registry unless `{:missing :skip}`."
+  ([registry ks] (or->multi-keys registry ks nil))
+  ([registry ks opts]
+   (let [missing (get opts :missing :throw)]
+     (reduce
+      (fn [acc k]
+        (cond
+          (contains? acc k) (assoc acc k (or->multi (get acc k) opts))
+          (= :skip missing) acc
+          :else             (throw (ex-info "or->multi-keys: key absent from registry"
+                                            {:reason :missing-key :key k}))))
+      registry
+      ks))))
 
 (defn serialize-registry [schema filename]
   (with-open [w (io/writer filename)]
