@@ -935,8 +935,20 @@
                (throw (ex-info "sequential should have one child" {:got children})))
         child (first children)
         ;sub-discriminator (make-tag-discriminator child)
+        ;; Every arm must consume one whole <sequence-tag>...</sequence-tag>
+        ;; element, closing tag included, or the enclosing element cannot exit.
+        ;; The `#_(:map)` below elides only the TEST, so the expression after it
+        ;; is this `case`'s default clause -- the form is not default-less, and a
+        ;; type missing from the tests here is silently wrapped as a single tag
+        ;; rather than throwing.
         sub-parser (case (-> child m/deref-all m/type)
-                     (:alt :cat :or) (wrap-next-before-tag (-xml-parser child))
+                     ;; Choice arms discriminate on the tag inside the wrapper,
+                     ;; so step past the wrapper's start tag and let
+                     ;; single-tag-parser match and close it. :multi is a
+                     ;; discriminated :or and parses identically; the map-entry
+                     ;; path groups the same four types.
+                     (:alt :cat :or :multi) (->> (wrap-next-before-tag (-xml-parser child))
+                                                 (single-tag-parser sequence-tag))
                      (:tuple) (-xml-parser child)
                      #_(:map) (single-tag-parser sequence-tag (-xml-parser child))
                      #_(-xml-parser child))]
