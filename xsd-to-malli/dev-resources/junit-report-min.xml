@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="dunnage.sitoa.PassingTest" timestamp="2026-08-17T10:00:00" hostname="localhost" tests="1" failures="0" errors="0" skipped="0" time="0.010">
+  <properties>
+    <property name="java.version" value="21.0.2"/>
+  </properties>
+  <testcase name="passes" classname="dunnage.sitoa.PassingTest" time="0.010"/>
+  <system-out>ok</system-out>
+  <system-err></system-err>
+</testsuite>

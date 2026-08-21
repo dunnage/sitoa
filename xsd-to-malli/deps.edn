@@ -1,0 +1,12 @@
+{:paths ["src" "generated-src" "resources"]
+ :deps  {org.clojure/clojure                    {:mvn/version "1.11.2"}
+         metosin/malli                          {:mvn/version "0.16.4"}
+         io.github.dunnage.sitoa/serde          {:local/root "../serde"
+                                                 :deps/root  "serde"}
+         io.github.dunnage.sitoa/xml-primitives {:local/root "../xml-primitives"
+                                                 :deps/root  "xml-primitives"}}
+ :aliases
+ {:dev  {:extra-paths ["dev-resources"]
+         :extra-deps  {ch.qos.logback/logback-classic {:mvn/version "1.4.3"}}}
+  :test {:extra-paths ["test"]
+         :extra-deps  {org.clojure/test.check {:mvn/version "1.1.1"}}}}}

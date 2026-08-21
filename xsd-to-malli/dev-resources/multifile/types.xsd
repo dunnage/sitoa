@@ -1,0 +1,54 @@
+<?xml version="1.0"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:t="urn:example:types"
+           targetNamespace="urn:example:types"
+           elementFormDefault="qualified">
+  <xs:include schemaLocation="common.xsd"/>
+  <xs:complexType name="BaseRecord">
+    <xs:sequence>
+      <xs:element name="id" type="xs:string"/>
+      <xs:element name="note" type="xs:string" minOccurs="0"/>
+    </xs:sequence>
+    <xs:attribute name="version" type="t:codeType"/>
+    <xs:attributeGroup ref="t:auditAttrs"/>
+  </xs:complexType>
+  <xs:complexType name="ExtendedRecord">
+    <xs:complexContent>
+      <xs:extension base="t:BaseRecord">
+        <xs:sequence>
+          <xs:element name="detail" type="xs:string" maxOccurs="unbounded"/>
+        </xs:sequence>
+        <xs:attribute name="priority" type="xs:int"/>
+      </xs:extension>
+    </xs:complexContent>
+  </xs:complexType>
+  <xs:complexType name="StrictRecord">
+    <xs:complexContent>
+      <xs:restriction base="t:BaseRecord">
+        <xs:sequence>
+          <xs:element name="id" type="xs:string"/>
+        </xs:sequence>
+        <xs:attribute name="version" type="t:codeType" use="required"/>
+      </xs:restriction>
+    </xs:complexContent>
+  </xs:complexType>
+  <xs:complexType name="Price">
+    <xs:simpleContent>
+      <xs:extension base="xs:decimal">
+        <xs:attribute name="currency" type="t:codeType" use="required"/>
+      </xs:extension>
+    </xs:simpleContent>
+  </xs:complexType>
+  <xs:complexType name="UsdPrice">
+    <xs:simpleContent>
+      <xs:restriction base="t:Price">
+        <xs:attribute name="currency" type="t:codeType" use="required" fixed="A"/>
+      </xs:restriction>
+    </xs:simpleContent>
+  </xs:complexType>
+  <xs:complexType name="RecordList">
+    <xs:sequence>
+      <xs:element name="item" type="t:ExtendedRecord" maxOccurs="unbounded"/>
+    </xs:sequence>
+  </xs:complexType>
+</xs:schema>
