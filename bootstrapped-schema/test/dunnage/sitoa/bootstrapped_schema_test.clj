@@ -1,9 +1,10 @@
 (ns dunnage.sitoa.bootstrapped-schema-test
   (:require [clojure.test :refer :all]
-            [dunnage.sitoa.bootstrapped-schema :refer [xsd->schema xsd->registry serialize-schema serialize-registry
-                                                       raw-xsd->schema trim-registry-for-top-types
-                                                       leading-tag-dispatch keywordize-leading-tag
-                                                       or->multi or->multi-keys]]
+            [dunnage.sitoa.bootstrapped-schema :as bs
+             :refer [xsd->schema xsd->registry serialize-schema serialize-registry
+                     raw-xsd->schema trim-registry-for-top-types
+                     leading-tag-dispatch keywordize-leading-tag
+                     or->multi or->multi-keys]]
             [malli.core :as m]
             [malli.util :as mu]
             [malli.transform :as mt]
@@ -274,6 +275,39 @@
     (let [converted (schema* (or->multi tuple-choice))]
       (is (false? (m/validate converted [:Zeta "x"])))
       (is (some? (m/explain converted [:Zeta "x"]))))))
+(defn- xsd [name] (io/file "dev-resources" name))
+
+(defn- own-entries [registry]
+  (remove (fn [[k v]] (= v (get xml-primitives/xmlschema-registry k))) registry))
+
+(deftest builtin-types-never-become-registry-entries
+  (testing "a schema in its own namespace keeps the builtin seed and nothing else"
+    (let [registry (xsd->registry {:default-ns "fop"} (bs/parse-xsd (xsd "fop.xsd")))]
+      (is (= 275 (count registry)))
+      (is (empty? (filter (comp bs/xsd-builtin-kw? key) (own-entries registry))))))
+  (testing "a reference to a builtin stays bare so the seeded entry resolves it"
+    (is (= :org.w3.www.2001.XMLSchema/NMTOKEN
+           (bs/wrap-ref-np :org.w3.www.2001.XMLSchema/NMTOKEN)))
+    (is (= [:ref :fop/length_Type] (bs/wrap-ref-np :fop/length_Type))))
+  (testing "anyType is a builtin with no mapping, so it inlines as open content"
+    (is (= :xml/hiccup (bs/wrap-ref-np :org.w3.www.2001.XMLSchema/anyType)))
+    (is (= :xml/hiccup (bs/wrap-ref-np :org.w3.www.2001.XMLSchema/anyType-seq)))))
+
+(deftest the-schema-for-schemas-declares-into-the-builtin-namespace
+  ;; XMLSchema.xsd's targetNamespace IS the XML Schema namespace: its types are
+  ;; declarations, not builtins, so they must reach the registry and must be
+  ;; referenced through [:ref ...] - the type graph is cyclic and a bare keyword
+  ;; reference would expand forever.
+  (let [xsom (bs/parse-xsd (xsd "XMLSchema.xsd"))
+        registry (xsd->registry {:default-ns "xsd"} xsom)
+        own (own-entries registry)]
+    (is (pos? (count own)))
+    (is (every? (comp #{"org.w3.www.2001.XMLSchema"} namespace key) own))
+    (testing "the seeded builtins survive alongside them"
+      (is (= :string (get registry :org.w3.www.2001.XMLSchema/string)))
+      (is (not (contains? registry :org.w3.www.2001.XMLSchema/anyType))))
+    (testing "the cyclic registry resolves into a schema"
+      (is (some? (xsd->schema {:default-ns "xsd"} (xsd "XMLSchema.xsd")))))))
 
 (comment
   (set! *print-namespace-maps* false)
