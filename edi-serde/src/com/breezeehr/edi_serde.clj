@@ -46,15 +46,55 @@
         (prn (.getErrorType r)))
       (ot r))))
 
-(defn skip-elements [element-pos from-pos]
+(defn- event-name [r] (.name (.getEventType r)))
+
+(defn- advance!
+  "Steps to the next event, or does nothing at the end of the stream. Guarded
+   because a malformed interchange can end mid-segment, and an unguarded
+   `.next` there throws from inside the reader rather than from the parser."
+  [r]
+  (when (.hasNext r) (.next r)))
+
+(defn skip-composite
+  "Advances from a composite's START_COMPOSITE to just past its END_COMPOSITE."
+  [r]
+  (loop []
+    (if (= (event-name r) "END_COMPOSITE")
+      (advance! r)
+      (when (.hasNext r)
+        (.next r)
+        (recur)))))
+
+(defn skip-elements
+  "Positions the reader at element `element-pos`, counting from `from-pos`, and
+   returns the reader -- or nil when the segment ran out before that position.
+
+   An element is a POSITION, not an event. A simple element is one
+   ELEMENT_DATA, but a composite occupies one position and spans
+   START_COMPOSITE .. END_COMPOSITE, so passing over it means passing the whole
+   span.
+
+   Counting events instead was the single defect behind every composite symptom
+   this parser had. At a START_COMPOSITE the old gate matched nothing and
+   returned nil, so the composite was neither entered nor skipped and the
+   reader stayed parked on it -- every later parser for that segment then
+   no-opped in turn, and `consume-segment` drained into a `case` with no
+   START_COMPOSITE branch. Hence `No matching clause: START_COMPOSITE` for a
+   composite the schema declared perfectly well, and silently empty segments
+   (HI, say) where the composites were merely dropped."
+  [element-pos from-pos]
   (let [skip (- element-pos from-pos)]
     (fn [r]
       (loop [skip skip]
-        (when (= (.name (.getEventType r)) "ELEMENT_DATA")
+        (case (event-name r)
+          ("ELEMENT_DATA" "START_COMPOSITE")
           (if (zero? skip)
             r
-            (do (.next r)
-                (recur (dec skip)))))))))
+            (do (if (= (event-name r) "START_COMPOSITE")
+                  (skip-composite r)
+                  (advance! r))
+                (recur (dec skip))))
+          nil)))))
 
 (def edi-date (-> (DateTimeFormatterBuilder.)
                   (.appendOptional (DateTimeFormatter/ofPattern "yyyyMMdd"))
@@ -190,16 +230,33 @@
     (fn [r]
       ;(prn (-> r .getLocation))
       (when (skipper r)
-        (if-some [txt (prim-parser (.getText r))]
-          (do (.next r)
-              [k txt])
-          (do  (.next r)
-               nil))))))
+        (if (= (event-name r) "START_COMPOSITE")
+          ;; The schema calls this position simple and the interchange sent a
+          ;; composite. Step over it: `.getText` on a START_COMPOSITE has no
+          ;; text to give, and leaving the reader here would strand the rest of
+          ;; the segment.
+          (do (skip-composite r) nil)
+          (if-some [txt (prim-parser (.getText r))]
+            (do (.next r)
+                [k txt])
+            (do  (.next r)
+                 nil)))))))
 
-(defn consume-composite [r]
-  (if (= (.name (.getEventType r)) "END_COMPOSITE")
-    (when (.hasNext r)
-      (.next r))))
+(defn consume-composite
+  "Drains what is left of the current composite and steps past its
+   END_COMPOSITE.
+
+   It used to advance only when the reader was already sitting exactly on
+   END_COMPOSITE, so a composite carrying more components than the schema
+   declares left the reader inside it and desynchronised everything after."
+  [r]
+  (loop []
+    (case (event-name r)
+      "END_COMPOSITE" (advance! r)
+      "ELEMENT_DATA" (when (.hasNext r)
+                       (.next r)
+                       (recur))
+      nil)))
 
 (defn make-composite-parser [k meta sch from-pos]
   (let [nm (next-map-sch sch)
@@ -232,23 +289,55 @@
               (when-some [coll (not-empty data)]
                 [k coll]))))
       (fn [r]
-
-        #_(when-not  (= (.name (.getEventType r)) "START_COMPOSITE")
-            (throw (ex-info "should be composite"
-                            {:sch sch
-                             :data (str r)})))
-
         (when (skipper r)
-          (let [m (into {}
-                        (map (fn [sub-parser]
-                               (sub-parser r)))
-                        sub-parsers)]
-            (consume-composite r)
-            [k m]))))))
+          (case (event-name r)
+            "START_COMPOSITE"
+            (do
+              ;; Step INTO the composite before running the component parsers.
+              ;; They count positions from the FIRST COMPONENT, so a reader
+              ;; still sitting on the START event is one position out and every
+              ;; component reads as absent.
+              (.next r)
+              (let [m (into {}
+                            (map (fn [sub-parser]
+                                   (sub-parser r)))
+                            sub-parsers)]
+                (consume-composite r)
+                [k m]))
 
-(defn collect-extra-elements [r]
+            ;; X12 lets a composite whose only populated component is the first
+            ;; travel without a component separator, and a reader has nothing
+            ;; to distinguish that from a simple element. Read it as component
+            ;; one rather than losing it.
+            "ELEMENT_DATA"
+            (when-some [kv ((first sub-parsers) r)]
+              [k (conj {} kv)])
+
+            nil))))))
+
+(defn- collect-composite-components
+  "The components of the composite the reader is sitting on, leaving the reader
+   just past its END_COMPOSITE."
+  [r]
+  (loop [acc []]
+    (advance! r)
+    (case (event-name r)
+      "ELEMENT_DATA" (recur (conj acc (.getText r)))
+      "END_COMPOSITE" (do (advance! r) acc)
+      acc)))
+
+(defn collect-extra-elements
+  "Drains the rest of a segment, returning the elements no parser claimed. A
+   composite comes back as a vector of its components.
+
+   The `case` used to have two branches and no default, so an undeclared
+   composite ended the parse with `No matching clause: START_COMPOSITE` -- an
+   IllegalArgumentException naming the event and nothing else, from a function
+   whose whole job is to be tolerant of what it does not recognise. Anything
+   still unaccounted for now says where it was."
+  [r]
   (loop [data []]
-    (case (.name (.getEventType r))
+    (case (event-name r)
       "END_SEGMENT"
       (do
         (when (.hasNext r)
@@ -258,7 +347,12 @@
       (let [el (.getText r)]
         (when (.hasNext r)
           (.next r))
-        (recur (conj data el))))))
+        (recur (conj data el)))
+      "START_COMPOSITE"
+      (recur (conj data (collect-composite-components r)))
+      (throw (ex-info "unexpected event while draining a segment"
+                      {:event (event-name r)
+                       :location (str (.getLocation r))})))))
 
 (defn consume-segment [r]
   (if (= (.name (.getEventType r)) "END_SEGMENT")
