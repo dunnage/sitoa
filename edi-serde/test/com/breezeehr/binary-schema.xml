@@ -1,0 +1,15 @@
+<schema xmlns="http://xlate.io/EDISchema/v4">
+  <transaction><sequence>
+    <segment type="ST" minOccurs="1"/>
+    <segment type="BIN" minOccurs="1" maxOccurs="99"/>
+    <segment type="REF" minOccurs="1"/>
+    <segment type="SE" minOccurs="1"/>
+  </sequence></transaction>
+  <segmentType name="ST"><sequence><element type="TEXT"/><element type="TEXT"/><element type="TEXT"/></sequence></segmentType>
+  <segmentType name="BIN"><sequence><element type="LENGTH" minOccurs="1"/><element type="DATA" minOccurs="1"/></sequence></segmentType>
+  <segmentType name="REF"><sequence><element type="TEXT"/><element type="TEXT"/></sequence></segmentType>
+  <segmentType name="SE"><sequence><element type="TEXT"/><element type="TEXT"/></sequence></segmentType>
+  <elementType name="TEXT" base="string" minLength="1" maxLength="35"/>
+  <elementType name="LENGTH" base="numeric" minLength="1" maxLength="15"/>
+  <elementType name="DATA" base="binary" minLength="1" maxLength="999999"/>
+</schema>

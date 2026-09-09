@@ -1,6 +1,44 @@
 # edi-serde
 
-FIXME: my new library.
+Schema-driven X12 parsing and writing with Malli and StAEDI.
+
+## Binary elements
+
+Use `bytes?` for a binary element. For X12 BIN, the map's sequence 1 element
+is the integer byte length and sequence 2 is the payload:
+
+```clojure
+[:map {:type :segment :segment-id "BIN"}
+ [:length {:sequence 1} :int]
+ [:payload {:sequence 2} [bytes? {:edi/data-type "B"}]]]
+```
+
+Create the StAEDI reader from an `InputStream` and the writer from an
+`OutputStream`. BIN02 is returned as a JVM byte array. No character decoding,
+base64 conversion, delimiter escaping, or newline normalization is applied to
+its contents. The whole payload is held in memory; this API is not a streaming
+attachment store. The implementation uses Java 11+ stream methods.
+
+The parser supplies BIN01 to StAEDI before advancing into BIN02, unless the
+reader's transaction schema already handles the length. BIN01 must contain
+1–15 decimal digits and fit a JVM byte-array length. Truncated payloads,
+missing payloads for positive lengths, and invalid boundaries after the
+payload throw instead of returning a partial attachment. The declared length
+is the framing authority: bytes that look like segments inside that length
+are payload, not EDI syntax.
+
+The writer derives BIN01 when absent or nil and rejects a supplied length
+that differs from the byte-array length, before writing that BIN segment.
+Empty byte arrays are supported by the default factories: `BIN*0*~` and the
+writer's truncated form `BIN*0~` both read as an empty byte array. This does
+not establish that an empty attachment meets a particular implementation guide.
+Compare payload contents with `java.util.Arrays/equals` or convert them to
+vectors for tests; Clojure `=` compares byte arrays by identity.
+
+Run the library tests with `clojure -M:test -m cognitect.test-runner`.
+The synthetic binary tests include every byte value, embedded delimiters,
+multiple BIN segments, malformed lengths, premature EOF, and readers with
+and without a StAEDI transaction schema.
 
 ## Usage
 

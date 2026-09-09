@@ -87,12 +87,15 @@
     (fn [r]
       (loop [skip skip]
         (case (event-name r)
-          ("ELEMENT_DATA" "START_COMPOSITE")
+          ("ELEMENT_DATA" "ELEMENT_DATA_BINARY" "START_COMPOSITE")
           (if (zero? skip)
             r
             (do (if (= (event-name r) "START_COMPOSITE")
                   (skip-composite r)
-                  (advance! r))
+                  (do
+                    (when (= (event-name r) "ELEMENT_DATA_BINARY")
+                      (.transferTo (.getBinaryData r) (java.io.OutputStream/nullOutputStream)))
+                    (advance! r)))
                 (recur (dec skip))))
           nil)))))
 
@@ -120,6 +123,7 @@
 
 (defn make-primitive-parser [sch]
   (case (->  sch m/deref m/type)
+    bytes? (fn [^java.io.InputStream stream] (.readAllBytes stream))
     :enum (fn [^String s]
             (when-not (.isEmpty s)
               s))
@@ -146,6 +150,12 @@
 
 (defn make-primitive-unparser [sch]
   (case (->  sch m/deref m/type)
+    bytes? (fn [^EDIStreamWriter w payload]
+             (when-not (bytes? payload)
+               (throw (ex-info "Binary element requires a byte array" {})))
+             (.writeStartElementBinary w)
+             (.writeBinaryData w (java.io.ByteArrayInputStream. ^bytes payload))
+             (.endElement w))
     :enum (fn [^EDIStreamWriter w ^String s]
             (if s
               (.writeElement w s)
@@ -226,16 +236,33 @@
 (defn make-element-parser [k meta sch from-pos]
   (let [element-pos (:sequence meta)
         skipper (skip-elements element-pos from-pos)
-        prim-parser (make-primitive-parser sch)]
+        prim-parser (make-primitive-parser sch)
+        binary? (= 'bytes? (-> sch m/deref m/type))]
     (fn [r]
       ;(prn (-> r .getLocation))
       (when (skipper r)
-        (if (= (event-name r) "START_COMPOSITE")
+        (cond
+          binary?
+          (let [payload (case (event-name r)
+                            "ELEMENT_DATA_BINARY" (prim-parser (.getBinaryData r))
+                            "ELEMENT_DATA" (if (= "" (.getText r))
+                                             (byte-array 0)
+                                             (throw (ex-info "Expected a binary stream event" {:element k})))
+                            (throw (ex-info "Expected a binary stream event"
+                                            {:event (event-name r) :element k})))]
+            (.next r)
+            [k payload])
+
+          (= (event-name r) "ELEMENT_DATA_BINARY")
+          (throw (ex-info "Binary data requires a bytes? schema" {:element k}))
+
+          (= (event-name r) "START_COMPOSITE")
           ;; The schema calls this position simple and the interchange sent a
           ;; composite. Step over it: `.getText` on a START_COMPOSITE has no
           ;; text to give, and leaving the reader here would strand the rest of
           ;; the segment.
           (do (skip-composite r) nil)
+          :else
           (if-some [txt (prim-parser (.getText r))]
             (do (.next r)
                 [k txt])
@@ -348,6 +375,12 @@
         (when (.hasNext r)
           (.next r))
         (recur (conj data el)))
+      "ELEMENT_DATA_BINARY"
+      (do
+        ;; Do not print or retain unclaimed attachment contents.
+        (.transferTo (.getBinaryData r) (java.io.OutputStream/nullOutputStream))
+        (advance! r)
+        (recur data))
       "START_COMPOSITE"
       (recur (conj data (collect-composite-components r)))
       (throw (ex-info "unexpected event while draining a segment"
@@ -361,6 +394,55 @@
     (let [loc (.getLocation r)
           extra (collect-extra-elements r)]
       (prn  :extra-data-on-segment (str loc) extra))))
+
+(defn- bin-keys [sch]
+  (when (= "BIN" (:segment-id (m/properties sch)))
+    (let [entries (into {} (map (fn [[k props child]]
+                                 [(:sequence props) [k child]]))
+                        (m/children sch))
+          [length-key] (get entries 1)
+          [payload-key payload-schema] (get entries 2)]
+      (when (and payload-schema (= 'bytes? (-> payload-schema m/deref m/type)))
+        (when-not length-key
+          (throw (ex-info "BIN requires its length element" {})))
+        [length-key payload-key]))))
+
+(defn- reader-manages-binary-length? [^EDIStreamReader r]
+  ;; At START_SEGMENT, a selected StAEDI transaction schema may already
+  ;; declare BIN02 binary. In that case StAEDI sets the length itself at
+  ;; BIN01; setting it a second time queues a duplicate binary event.
+  (let [payload-type (some-> r .getSchemaTypeReference .getReferencedType
+                             .getReferences second .getReferencedType)]
+    (and (instance? io.xlate.edi.schema.EDISimpleType payload-type)
+         (= io.xlate.edi.schema.EDISimpleType$Base/BINARY (.getBase payload-type)))))
+
+(defn- start-bin! [^EDIStreamReader r reader-managed?]
+  (when-not (and (= "ELEMENT_DATA" (event-name r))
+                 (= 1 (.getElementPosition (.getLocation r))))
+    (throw (ex-info "BIN01 byte length is missing" {})))
+  (let [text (.getText r)]
+    (when-not (re-matches #"[0-9]{1,15}" text)
+      (throw (ex-info "Invalid BIN01 byte length" {:length text})))
+    (let [length (Long/parseLong text)]
+      ;; The public representation is a JVM byte array.
+      (when (> length Integer/MAX_VALUE)
+        (throw (ex-info "BIN payload exceeds byte-array capacity" {:length length})))
+      ;; Zero bytes need no binary mode. Setting it after BIN*0~ would
+      ;; enqueue a binary event after the segment has already ended.
+      (when (and (pos? length) (not reader-managed?)) (.setBinaryDataLength r length))
+      length)))
+
+(defn- check-bin [data [length-key payload-key] expected]
+  (let [payload (get data payload-key)]
+    (when-not (bytes? payload)
+      (throw (ex-info "BIN02 requires a byte array" {})))
+    (let [actual (alength ^bytes payload)
+          declared (get data length-key)]
+      (when (or (and (some? expected) (not= expected actual))
+                (and (some? declared) (not= declared actual)))
+        (throw (ex-info "BIN01 does not match BIN02 byte length"
+                        {:declared (or expected declared) :actual actual})))
+      (assoc data length-key actual))))
 
 (defn make-segment-parser [k meta sch]
   (let [nm (next-map-sch sch)
@@ -377,34 +459,40 @@
                                      nil (make-element-parser k meta sub-schema epos)))))
                           (m/children nm))
         tag (-> nm m/properties :segment-id)
-        validator (m/coercer sch)]
+        validator (m/coercer nm)
+        binary-keys (bin-keys nm)
+        parse-one (fn [^EDIStreamReader r]
+                    (let [reader-managed? (and binary-keys (reader-manages-binary-length? r))
+                          _ (.next r)
+                          expected (when binary-keys (start-bin! r reader-managed?))
+                          data (into {} (map #(% r)) sub-parsers)
+                          ;; StAEDI truncates an empty final element when its
+                          ;; TRUNCATE_EMPTY_ELEMENTS option is enabled.
+                          data (if (and (= 0 expected)
+                                        (= "END_SEGMENT" (event-name r))
+                                        (not (contains? data (second binary-keys))))
+                                 (assoc data (second binary-keys) (byte-array 0))
+                                 data)]
+                      (when binary-keys
+                        (check-bin data binary-keys expected)
+                        (when-not (= "END_SEGMENT" (event-name r))
+                          (throw (ex-info "Expected segment end after BIN02"
+                                          {:event (event-name r)}))))
+                      (when (or binary-keys (not collection?)) (validator data))
+                      (consume-segment r)
+                      data))]
     (if collection?
       (fn [r]
-        (assert (= (.name (.getEventType r)) "START_SEGMENT") (.name (.getEventType r)))
+        (assert (= (event-name r) "START_SEGMENT"))
         (loop [data []]
-          (if (= (-> r .getLocation .getSegmentTag) tag)
-            (do
-              (.next r)
-              (let [m (into {}
-                            (map (fn [sub-parser]
-                                   (sub-parser r)))
-                            sub-parsers)]
-                (consume-segment r)
-                (recur (conj data m))))
-            (when-some [coll (not-empty data)]
-              [k coll]))))
+          (if (and (= (event-name r) "START_SEGMENT")
+                   (= (-> r .getLocation .getSegmentTag) tag))
+            (recur (conj data (parse-one r)))
+            (when-some [coll (not-empty data)] [k coll]))))
       (fn [r]
-        (assert (= (.name (.getEventType r)) "START_SEGMENT"))
+        (assert (= (event-name r) "START_SEGMENT"))
         (when (= (-> r .getLocation .getSegmentTag) tag)
-          (.next r)
-          (let [m (into {}
-                        (map (fn [sub-parser]
-                               (sub-parser r)))
-                        sub-parsers)]
-            (validator m)
-            ;(prn (.name (.getEventType r)))
-            (consume-segment r)
-            [k m]))))))
+          [k (parse-one r)])))))
 
 (defn make-component-unparser [k meta sub-schema epos]
   (let [unparser (make-primitive-component-unparser sub-schema)]
@@ -486,23 +574,15 @@
                                                nil [k (make-element-unparser k meta sub-schema epos)]))))))
                             (m/children nm))
         tag (-> nm m/properties :segment-id)
-        validator (m/coercer sch)]
+        binary-keys (bin-keys nm)
+        write-one (fn [^EDIStreamWriter w data]
+                    (let [data (if binary-keys (check-bin data binary-keys nil) data)]
+                      (.writeStartSegment w tag)
+                      (run! (fn [[k unparse]] (unparse w (get data k))) sub-unparsers)
+                      (.writeEndSegment w)))]
     (if collection?
-      (fn [w data]
-        (run!
-         (fn [data]
-           (.writeStartSegment w tag)
-           (run! (fn [[k unparse]]
-                   (unparse w (get data k)))
-                 sub-unparsers)
-           (.writeEndSegment w))
-         data))
-      (fn [w data]
-        (.writeStartSegment w tag)
-        (run! (fn [[k unparse]]
-                (unparse w (get data k)))
-              sub-unparsers)
-        (.writeEndSegment w)))))
+      (fn [w data] (run! #(write-one w %) data))
+      write-one)))
 
 (defn first-segment [sch]
   (when-some [nm (next-map-sch sch)]
