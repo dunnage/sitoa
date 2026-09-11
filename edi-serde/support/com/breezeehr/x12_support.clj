@@ -394,6 +394,7 @@
                                                      (reverse (range (some-> (get main "Minimum Length") parse-long)
                                                                      (inc (some-> (get main "Maximum Length") parse-long))
                                                                      2)))))]
+             "B" ['bytes? {:edi/data-type "B"}]
              "R" 'decimal?
              "N0" [:int {:min-chars (some-> (get main "Minimum Length") parse-long)
                          :max-chars (some-> (get main "Maximum Length") parse-long)}]
@@ -494,11 +495,13 @@
   (let [ps (process-segment spec)]
     (fn [segment-ds]
       (into []
-            (keep (fn [{seq-num "Sequence"  :as segment}]
+            (keep (fn [{seq-num "Sequence" area "Area" :as segment}]
                     #_(prn (get segment "Area") seq-num (get segment "Segment ID"))
                     #_(prn (-> (get *context-data* "CONDETL.TXT" )
                              (ds/filter-column "Sequence" #(= % seq-num))))
                    (binding [*context-data* (-> *context-data*
+                                                (update "CONDETL.TXT" ds/filter-column "Area" #(= % area))
+                                                (update "CONTEXT.TXT" ds/filter-column "Area" #(= % area))
                                                 (update "CONDETL.TXT" ds/filter-column "Sequence" #(= % seq-num))
                                                 (update "CONTEXT.TXT" ds/filter-column "Sequence" #(= % seq-num)))]
                      (ps segment))) )
@@ -613,12 +616,48 @@
             (ps area-ds)))))))
 
 (defn make-message [{tx-set "SETDETL.TXT" :as spec}]
-  (-> [:map {:type :transaction-set}]
-      (into (comp
-              (mapcat (process-areas spec)))
-            (partition-dataset-by tx-set #(> (parse-long (get % "Loop Level")) 0)))
-      (m/schema {:registry (merge (m/default-schemas) (mtime/schemas))})
-      ))
+  (let [rows (vec (ds/mapseq-reader tx-set))
+        segment (process-segment spec)]
+    (letfn [(emit-segment [row]
+              (binding [*context-data*
+                        (reduce (fn [context column]
+                                  (update context column
+                                          #(-> %
+                                               (ds/filter-column "Area" #{(get row "Area")})
+                                               (ds/filter-column "Sequence" #{(get row "Sequence")}))))
+                                (select-keys spec ["CONDETL.TXT" "CONTEXT.TXT"])
+                                ["CONDETL.TXT" "CONTEXT.TXT"])]
+                (segment row)))
+            (emit-rows [start end]
+              (loop [i start entries []]
+                (if (>= i end)
+                  entries
+                  (let [row (nth rows i)
+                        level (parse-long (get row "Loop Level"))
+                        loop-id (get row "Loop Identifier")
+                        entry (emit-segment row)]
+                    (if loop-id
+                      (let [next-index
+                            (or (first
+                                  (filter (fn [j]
+                                            (let [candidate (nth rows j)
+                                                  candidate-level (parse-long (get candidate "Loop Level"))]
+                                              (or (< candidate-level level)
+                                                  (and (get candidate "Loop Identifier")
+                                                       (<= candidate-level level)))))
+                                          (range (inc i) end)))
+                                end)
+                            children (emit-rows (inc i) next-index)
+                            loop-schema (into [:map {:type :loop}] (cons entry children))
+                            repeated? (not= "1" (get row "Loop Repeat"))]
+                        (recur next-index
+                               (cond-> entries
+                                 entry (conj [loop-id
+                                              (if (= "M" (get row "Requirement")) {} {:optional true})
+                                              (if repeated? [:sequential loop-schema] loop-schema)]))))
+                      (recur (inc i) (cond-> entries entry (conj entry))))))))]
+      (m/schema (into [:map {:type :transaction-set}] (emit-rows 0 (count rows)))
+                {:registry (merge (m/default-schemas) (mtime/schemas))}))))
 
 (def files {"SETHEAD.TXT"
             ["Transaction Set ID", "Transaction Set Name", "Functional Group ID"]
