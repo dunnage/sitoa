@@ -295,7 +295,16 @@
             neither slot's claim is clean; the segment stays in 2000A and fails
             there on the element that is actually wrong."
     (is (= {:in [:child-04] :value "0"}
-           (coercion-failure #(parse flat-837 "HL*1**20*0"))))))
+           (coercion-failure #(parse flat-837 "HL*1**20*0")))))
+  (testing "a REPEATING segment slot holds each of its segments to its own code
+            lists, as a single slot does. `REF*ZZ` fits neither REF slot, so it
+            stays in `:prior-authorization` and fails there; it used to land
+            there unvalidated."
+    (is (= {:in [:qualifier-01] :value "ZZ"}
+           (coercion-failure #(claim "REF*ZZ*UNKNOWN")))))
+  (testing "every segment of it, not only the first"
+    (is (= {:in [:qualifier-01] :value "ZZ"}
+           (coercion-failure #(claim "REF*G1*AUTH1" "REF*ZZ*UNKNOWN"))))))
 
 (deftest what-the-writer-writes-the-reader-reads-back
   (doseq [[label schema segments]

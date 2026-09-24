@@ -53,9 +53,11 @@ passes on it when:
 - some value is in only the later slot's code list, and
 - no value is in only its own.
 
-A segment whose values point both ways stays in the slot its tag selects and
-fails validation there, with the element named. A code both slots admit also
-stays with the first. The later slots considered include whatever may follow
+A segment whose values point both ways, or that no slot admits, stays in the
+slot its tag selects and fails validation there, with the element named. That
+holds for a repeating slot as it does for a single one: every segment a slot
+takes is checked against the slot's schema. A code both slots admit also stays
+with the first. The later slots considered include whatever may follow
 the enclosing loops, so a nested loop yields to its parent's next iteration.
 
 Slots with no such rival decide on the tag alone and never read ahead.

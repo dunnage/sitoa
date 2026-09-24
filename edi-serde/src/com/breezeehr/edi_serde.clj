@@ -720,7 +720,7 @@
                          (when-not (= "END_SEGMENT" (event-name r))
                            (throw (ex-info "Expected segment end after BIN02"
                                            {:event (event-name r)}))))
-                       (when (or binary-keys (not collection?)) (validator data))
+                       (validator data)
                        (consume-segment r)
                        data))]
      (if collection?
