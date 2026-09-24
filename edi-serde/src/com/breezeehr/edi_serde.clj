@@ -757,8 +757,11 @@
                             (mapcat (fn [[k meta sub-schema]]
                                       (let [epos (inc @element-pos)]
                                         (vreset! element-pos (-> meta :sequence))
-                                        (-> (if (> epos (-> meta :sequence))
-                                              [nil (empty-component-unparser (- epos (-> meta :sequence)))]
+                                        ;; Pads a hole the schema leaves before this
+                                        ;; component, as the segment unparser does for
+                                        ;; elements.
+                                        (-> (if (> (-> meta :sequence) epos)
+                                              [[nil (empty-component-unparser (- (-> meta :sequence) epos))]]
                                               [])
                                             (conj
                                              (case (next-map-type sub-schema)

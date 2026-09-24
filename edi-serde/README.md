@@ -64,6 +64,20 @@ Slots with no such rival decide on the tag alone and never read ahead.
 `make-parser` sets up the lookahead itself. To run a loop or segment parser
 directly, wrap the reader with `lookahead-reader` first.
 
+## Positions a schema leaves out
+
+A generated schema omits the elements and components a guide marks not used,
+so the declared `:sequence` numbers can have holes: a 275's STC01 declares
+components 01, 02 and 04. The writer fills an interior hole with empty
+elements or components, so a value always goes out at its own position:
+`STC*R4:18842-5::LOI`, not `STC*R4:18842-5:LOI`.
+
+The writer does not trim what follows the last value itself. It writes every
+declared position it has no value for as empty and relies on StAEDI's
+`TRUNCATE_EMPTY_ELEMENTS`, which `default-output-factory` sets, to drop empty
+trailing elements and components. A writer created from a factory without
+that property writes them out, as `STC*R4:18842-5::*`.
+
 ## Usage
 
 FIXME: write usage documentation!
