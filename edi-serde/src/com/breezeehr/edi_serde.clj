@@ -4,8 +4,8 @@
             [malli.core :as m]
             [malli.experimental.time])
   (:import (io.xlate.edi.schema Schema SchemaFactory)
-           (io.xlate.edi.stream EDIInputFactory EDIStreamConstants EDIStreamConstants$Standards EDIStreamReader EDIOutputFactory EDIStreamWriter)
-           (java.io PushbackReader)
+           (io.xlate.edi.stream EDIInputFactory EDIStreamConstants EDIStreamConstants$Standards EDIStreamReader EDIOutputFactory EDIStreamWriter Location)
+           (java.io ByteArrayInputStream PushbackReader)
            (java.time LocalDate LocalTime)
            (java.time.format DateTimeFormatter DateTimeFormatterBuilder)))
 
@@ -38,13 +38,16 @@
             (recur results)))
         (not-empty results)))))
 
+(declare lookahead-reader)
+
 (defn parse-starter [ot]
-  (fn [^EDIStreamReader r]
-    (assert (.hasNext r))
-    (let [next (.next r)]
-      (when (.isError next)
-        (prn (.getErrorType r)))
-      (ot r))))
+  (fn [r]
+    (let [^EDIStreamReader r (lookahead-reader r)]
+      (assert (.hasNext r))
+      (let [next (.next r)]
+        (when (.isError next)
+          (prn (.getErrorType r)))
+        (ot r)))))
 
 (defn- event-name [r] (.name (.getEventType r)))
 
@@ -444,55 +447,294 @@
                         {:declared (or expected declared) :actual actual})))
       (assoc data length-key actual))))
 
-(defn make-segment-parser [k meta sch]
-  (let [nm (next-map-sch sch)
-        collection? (case (m/type sch)
-                      (:sequential :vector :set) true
-                      false)
-        element-pos (volatile! 0)
-        sub-parsers (into []
-                          (map (fn [[k meta sub-schema]]
-                                 (let [epos (inc @element-pos)]
-                                   (vreset! element-pos (-> meta :sequence))
-                                   (case (next-map-type sub-schema)
-                                     :composite (make-composite-parser k meta sub-schema epos)
-                                     nil (make-element-parser k meta sub-schema epos)))))
-                          (m/children nm))
-        tag (-> nm m/properties :segment-id)
-        validator (m/coercer nm)
-        binary-keys (bin-keys nm)
-        parse-one (fn [^EDIStreamReader r]
-                    (let [reader-managed? (and binary-keys (reader-manages-binary-length? r))
-                          _ (.next r)
-                          expected (when binary-keys (start-bin! r reader-managed?))
-                          data (into {} (map #(% r)) sub-parsers)
-                          ;; StAEDI truncates an empty final element when its
-                          ;; TRUNCATE_EMPTY_ELEMENTS option is enabled.
-                          data (if (and (= 0 expected)
-                                        (= "END_SEGMENT" (event-name r))
-                                        (not (contains? data (second binary-keys))))
-                                 (assoc data (second binary-keys) (byte-array 0))
-                                 data)]
-                      (when binary-keys
-                        (check-bin data binary-keys expected)
-                        (when-not (= "END_SEGMENT" (event-name r))
-                          (throw (ex-info "Expected segment end after BIN02"
-                                          {:event (event-name r)}))))
-                      (when (or binary-keys (not collection?)) (validator data))
-                      (consume-segment r)
-                      data))]
-    (if collection?
-      (fn [r]
-        (assert (= (event-name r) "START_SEGMENT"))
-        (loop [data []]
-          (if (and (= (event-name r) "START_SEGMENT")
-                   (= (-> r .getLocation .getSegmentTag) tag))
-            (recur (conj data (parse-one r)))
-            (when-some [coll (not-empty data)] [k coll]))))
-      (fn [r]
-        (assert (= (event-name r) "START_SEGMENT"))
-        (when (= (-> r .getLocation .getSegmentTag) tag)
-          [k (parse-one r)])))))
+;; ---------------------------------------------------------------------------
+;; Telling same-id sibling slots apart
+;; ---------------------------------------------------------------------------
+;;
+;; Implementation guides give sibling slots one segment id and tell them apart
+;; by a qualifier: an 837's 2000A, 2000B and 2000C all begin with HL and differ
+;; in HL03, and a 2300 carries a separate DTP slot per DTP01 code. Chosen by tag
+;; alone, the first such slot took every segment of that id -- a repeating one
+;; swallowed its siblings' segments unvalidated, and a single one failed
+;; validation on the first segment that was not its own.
+;;
+;; The schema already states each qualifier: the slots pin different code lists
+;; at that position. So a slot with a same-id rival reads the segment one step
+;; ahead, and passes on it when the rival admits a value this slot's code lists
+;; reject and the segment carries no value only this slot admits. Nothing names
+;; a qualifier; the code lists decide, wherever they differ.
+;;
+;; Lookahead rather than backtracking: a guide tells its same-id slots apart
+;; within the segment itself, so one segment decides. And a slot only passes on
+;; a segment its own code lists reject, so a segment its slot accepts never
+;; moves.
+
+(defprotocol SegmentLookahead
+  (segment-values [r]
+    "The segment the reader is on, read AHEAD without consuming it, as
+     `{[element component] text}` -- first occurrence of each position. A simple
+     element is component 1 of its position, which is also how the reader
+     reports a composite that travelled with its first component and no
+     separator. The reader goes on to replay the segment to whichever parser
+     takes it."))
+
+(defn- capture-event [^EDIStreamReader r]
+  (let [event (.getEventType r)]
+    {:event event
+     :text (when (.hasText r) (.getText r))
+     ;; `.getLocation` is ONE mutable object the reader updates in place.
+     :location (.copy (.getLocation r))
+     :error-type (when (.isError event) (.getErrorType r))
+     :reference-code (.getReferenceCode r)
+     :type-reference (.getSchemaTypeReference r)
+     :binary (when (= "ELEMENT_DATA_BINARY" (.name event))
+               (.readAllBytes (.getBinaryData r)))}))
+
+(defn- values-of [events]
+  (into {}
+        (keep (fn [{:keys [event text ^Location location]}]
+                (when (and (= "ELEMENT_DATA" (.name ^Enum event))
+                           (= 1 (.getElementOccurrence location)))
+                  [[(.getElementPosition location) (max 1 (.getComponentPosition location))]
+                   text])))
+        events))
+
+(defn- not-in-this-state [what]
+  (IllegalStateException. (str what " is not available for the current event")))
+
+(deftype LookaheadReader [^EDIStreamReader r
+                          ^:unsynchronized-mutable buffered
+                          ^:unsynchronized-mutable ^long at
+                          ^:unsynchronized-mutable values]
+  SegmentLookahead
+  (segment-values [_]
+    (cond
+      (and buffered (zero? at)) values
+      buffered (throw (IllegalStateException. "Lookahead starts at a START_SEGMENT, not mid-segment"))
+      (not= "START_SEGMENT" (.name (.getEventType r)))
+      (throw (IllegalStateException. (str "Lookahead starts at a START_SEGMENT, not "
+                                          (.name (.getEventType r)))))
+      :else
+      (let [events (loop [events [(capture-event r)]]
+                     (if (or (= "END_SEGMENT" (.name (.getEventType r))) (not (.hasNext r)))
+                       events
+                       (do (.next r) (recur (conj events (capture-event r))))))]
+        (set! buffered events)
+        (set! at 0)
+        (set! values (values-of events))
+        values)))
+
+  EDIStreamReader
+  (next [_]
+    (if buffered
+      (if (< at (dec (count buffered)))
+        (do (set! at (inc at))
+            (:event (nth buffered at)))
+        (do (set! buffered nil)
+            (set! values nil)
+            (.next r)))
+      (.next r)))
+  (hasNext [_] (or (and (some? buffered) (< at (dec (count buffered)))) (.hasNext r)))
+  (getEventType [_] (if buffered (:event (nth buffered at)) (.getEventType r)))
+  (hasText [_] (if buffered (some? (:text (nth buffered at))) (.hasText r)))
+  (getText [_]
+    (if buffered
+      (or (:text (nth buffered at)) (throw (not-in-this-state "Text")))
+      (.getText r)))
+  (getTextCharacters [this]
+    (if buffered (.toCharArray (.getText this)) (.getTextCharacters r)))
+  (getTextCharacters [this source-start target target-start length]
+    (if buffered
+      (let [text (.getText this)
+            n (min length (- (count text) source-start))]
+        (.getChars text (int source-start) (int (+ source-start n)) ^chars target (int target-start))
+        (int n))
+      (.getTextCharacters r source-start target target-start length)))
+  (getTextStart [_] (if buffered 0 (.getTextStart r)))
+  (getTextLength [this] (if buffered (count (.getText this)) (.getTextLength r)))
+  (getLocation [_] (if buffered (:location (nth buffered at)) (.getLocation r)))
+  (getErrorType [_]
+    (if buffered
+      (or (:error-type (nth buffered at)) (throw (not-in-this-state "An error type")))
+      (.getErrorType r)))
+  (getReferenceCode [_] (if buffered (:reference-code (nth buffered at)) (.getReferenceCode r)))
+  (getSchemaTypeReference [_]
+    (if buffered (:type-reference (nth buffered at)) (.getSchemaTypeReference r)))
+  (getBinaryData [_]
+    (if buffered
+      (if-some [b (:binary (nth buffered at))]
+        (ByteArrayInputStream. ^bytes b)
+        (throw (not-in-this-state "Binary data")))
+      (.getBinaryData r)))
+  (setBinaryDataLength [_ length]
+    ;; Too late: a segment read ahead was read as text. No slot that needs
+    ;; lookahead holds binary data, and this says so if one ever does.
+    (when buffered
+      (throw (IllegalStateException. "A segment read ahead cannot switch to binary data")))
+    (.setBinaryDataLength r length))
+  (nextTag [_]
+    (when buffered
+      (throw (UnsupportedOperationException. "nextTag inside a segment read ahead")))
+    (.nextTag r))
+  (close [_] (.close r))
+  (getProperty [_ name] (.getProperty r name))
+  (getDelimiters [_] (.getDelimiters r))
+  (getStandard [_] (.getStandard r))
+  (getVersion [_] (.getVersion r))
+  (getTransactionVersion [_] (.getTransactionVersion r))
+  (getTransactionVersionString [_] (.getTransactionVersionString r))
+  (getTransactionType [_] (.getTransactionType r))
+  (getControlSchema [_] (.getControlSchema r))
+  (setControlSchema [_ schema] (.setControlSchema r schema))
+  (getTransactionSchema [_] (.getTransactionSchema r))
+  (setTransactionSchema [_ schema] (.setTransactionSchema r schema)))
+
+(extend-protocol SegmentLookahead
+  EDIStreamReader
+  (segment-values [_]
+    (throw (ex-info (str "This slot shares its segment id with a sibling, and telling "
+                         "them apart means reading a segment ahead. `make-parser` "
+                         "arranges that; to run a loop or segment parser directly, "
+                         "wrap the reader with `lookahead-reader` first.")
+                    {}))))
+
+(defn lookahead-reader
+  "A reader a parser can read one segment ahead on. `make-parser` wraps its
+   reader itself; call this only to run a loop or segment parser directly."
+  ^EDIStreamReader [r]
+  (if (instance? LookaheadReader r) r (LookaheadReader. r nil 0 nil)))
+
+(defn first-segment [sch]
+  (when-some [nm (next-map-sch sch)]
+    (case (-> nm m/properties :type)
+      :loop (when-some [[_ _ fchild] (-> nm m/children first)]
+              ;(prn fchild)
+              (recur fchild))
+      :segment nm)))
+
+(defn- enum-codes [sch]
+  (let [sch (m/deref sch)]
+    (when (= :enum (m/type sch))
+      (set (m/children sch)))))
+
+(defn- code-lists
+  "Every code list a segment schema pins, as `{[element component] #{code}}`."
+  [seg]
+  (into {}
+        (mapcat (fn [[_ {e :sequence} child]]
+                  (if (= :composite (next-map-type child))
+                    (for [[_ {c :sequence} component] (m/children (next-map-sch child))
+                          :let [codes (enum-codes component)]
+                          :when codes]
+                      [[e c] codes])
+                    (when-some [codes (enum-codes child)]
+                      [[[e 1] codes]]))))
+        (m/children seg)))
+
+(defn- where-code-lists-differ
+  "`[[position ours theirs] ...]` for every position both segment schemas pin
+   with a code list, and pin differently."
+  [seg rival]
+  (let [theirs (code-lists rival)]
+    (into []
+          (keep (fn [[position ours]]
+                  (when-some [t (get theirs position)]
+                    (when (not= ours t) [position ours t]))))
+          (code-lists seg))))
+
+(defn- the-rivals?
+  "True when a segment's values fit a rival's code lists and not ours: some
+   value only the rival admits, and none only we admit.
+
+   A segment carrying evidence BOTH ways is not the rival's. It stays where its
+   tag puts it and fails that slot's validation, naming the element -- which is
+   the better error than a segment no slot claimed."
+  [differences values]
+  (= #{:theirs}
+     (into #{}
+           (keep (fn [[position ours theirs]]
+                   (when-some [v (get values position)]
+                     (cond (and (theirs v) (not (ours v))) :theirs
+                           (and (ours v) (not (theirs v))) :ours))))
+           differences)))
+
+(defn- takes-segment?
+  "Whether the segment the reader is on belongs to the slot whose segment -- or
+   whose loop's first segment -- is `seg`. `follow` holds the segment schemas of
+   every slot that could take the segment instead: later siblings, and whatever
+   may follow the enclosing loops.
+
+   Only a rival with the same segment id and a different code list somewhere
+   makes the slot read ahead. Every other slot decides on the tag alone and
+   never reads ahead, which keeps lookahead away from binary segments: their
+   length has to be set before their payload is read."
+  [seg follow]
+  (let [tag (-> seg m/properties :segment-id)
+        contests (into []
+                       (comp (filter #(= tag (-> % m/properties :segment-id)))
+                             (map #(where-code-lists-differ seg %))
+                             (remove empty?)
+                             (distinct))
+                       follow)]
+    (if (empty? contests)
+      (fn [^EDIStreamReader r] (= tag (-> r .getLocation .getSegmentTag)))
+      (fn [^EDIStreamReader r]
+        (and (= tag (-> r .getLocation .getSegmentTag))
+             (= "START_SEGMENT" (event-name r))
+             (let [values (segment-values r)]
+               (not-any? #(the-rivals? % values) contests)))))))
+
+(defn make-segment-parser
+  ([k meta sch] (make-segment-parser k meta sch []))
+  ([k meta sch follow]
+   (let [nm (next-map-sch sch)
+         collection? (case (m/type sch)
+                       (:sequential :vector :set) true
+                       false)
+         element-pos (volatile! 0)
+         sub-parsers (into []
+                           (map (fn [[k meta sub-schema]]
+                                  (let [epos (inc @element-pos)]
+                                    (vreset! element-pos (-> meta :sequence))
+                                    (case (next-map-type sub-schema)
+                                      :composite (make-composite-parser k meta sub-schema epos)
+                                      nil (make-element-parser k meta sub-schema epos)))))
+                           (m/children nm))
+         takes? (takes-segment? nm follow)
+         validator (m/coercer nm)
+         binary-keys (bin-keys nm)
+         parse-one (fn [^EDIStreamReader r]
+                     (let [reader-managed? (and binary-keys (reader-manages-binary-length? r))
+                           _ (.next r)
+                           expected (when binary-keys (start-bin! r reader-managed?))
+                           data (into {} (map #(% r)) sub-parsers)
+                           ;; StAEDI truncates an empty final element when its
+                           ;; TRUNCATE_EMPTY_ELEMENTS option is enabled.
+                           data (if (and (= 0 expected)
+                                         (= "END_SEGMENT" (event-name r))
+                                         (not (contains? data (second binary-keys))))
+                                  (assoc data (second binary-keys) (byte-array 0))
+                                  data)]
+                       (when binary-keys
+                         (check-bin data binary-keys expected)
+                         (when-not (= "END_SEGMENT" (event-name r))
+                           (throw (ex-info "Expected segment end after BIN02"
+                                           {:event (event-name r)}))))
+                       (when (or binary-keys (not collection?)) (validator data))
+                       (consume-segment r)
+                       data))]
+     (if collection?
+       (fn [r]
+         (assert (= (event-name r) "START_SEGMENT"))
+         (loop [data []]
+           (if (and (= (event-name r) "START_SEGMENT")
+                    (takes? r))
+             (recur (conj data (parse-one r)))
+             (when-some [coll (not-empty data)] [k coll]))))
+       (fn [r]
+         (assert (= (event-name r) "START_SEGMENT"))
+         (when (takes? r)
+           [k (parse-one r)]))))))
 
 (defn make-component-unparser [k meta sub-schema epos]
   (let [unparser (make-primitive-component-unparser sub-schema)]
@@ -584,58 +826,58 @@
       (fn [w data] (run! #(write-one w %) data))
       write-one)))
 
-(defn first-segment [sch]
-  (when-some [nm (next-map-sch sch)]
-    (case (-> nm m/properties :type)
-      :loop (when-some [[_ _ fchild] (-> nm m/children first)]
-              ;(prn fchild)
-              (recur fchild))
-      :segment nm)))
+(declare make-loop-parser)
 
-(defn make-loop-parser [k meta sch]
-  (if-some [nm (next-map-sch sch)]
-    (let [collection? (case (m/type sch)
-                        (:sequential :vector :set) true
-                        false)
-          sub-parsers (into []
-                            (map (fn [x]
-                                   (let [[k meta sub-schema] x]
-                                     (case (next-map-type sub-schema)
-                                       :loop (make-loop-parser k meta sub-schema)
-                                       :segment (make-segment-parser k meta sub-schema)))))
-                            (m/children nm))
-          tag (some-> nm first-segment m/properties :segment-id)]
-      (if collection?
-        (fn [r]
-          ;(prn tag)
-          (assert (= (.name (.getEventType r)) "START_SEGMENT"))
-          (loop [data []]
-            (if (= (-> r .getLocation .getSegmentTag) tag)
-              (recur (conj data (into {}
-                                      (map (fn [sub-parser]
-                                             (sub-parser r)))
-                                      sub-parsers)))
-              (when-some [v (not-empty data)]
-                [k v]))))
-        (fn [r]
-          ;(prn tag)
-          (assert (= (.name (.getEventType r)) "START_SEGMENT"))
-          (when (= (-> r .getLocation .getSegmentTag) tag)
-            (let [m (into {}
-                          (map (fn [sub-parser]
-                                 (sub-parser r)))
-                          sub-parsers)]
-              [k m])))))
-    (assert false)
-    #_(fn [r] nil)))
+(defn- slot-parsers
+  "Parsers for the slots of one loop or transaction set, in schema order.
+
+   Each is told what could take a segment if it does not: every later slot in
+   this body, then `after`, which is what may follow the body itself. A slot
+   needs that list to tell its own segments from a same-id sibling's."
+  [children after]
+  (let [children (vec children)
+        firsts (mapv (fn [[_ _ sch]] (first-segment sch)) children)]
+    (into []
+          (map-indexed
+           (fn [i [k meta sch]]
+             (let [follow (-> [] (into (remove nil?) (subvec firsts (inc i))) (into after))]
+               (case (next-map-type sch)
+                 :loop (make-loop-parser k meta sch follow)
+                 :segment (make-segment-parser k meta sch follow)))))
+          children)))
+
+(defn make-loop-parser
+  ([k meta sch] (make-loop-parser k meta sch []))
+  ([k meta sch follow]
+   (if-some [nm (next-map-sch sch)]
+     (let [collection? (case (m/type sch)
+                         (:sequential :vector :set) true
+                         false)
+           seg (first-segment nm)
+           ;; A repeating loop's body can be followed by the loop again.
+           sub-parsers (slot-parsers (m/children nm) (if (and collection? seg) (into [seg] follow) follow))
+           starts? (if seg (takes-segment? seg follow) (constantly false))
+           ;; An iteration that consumed nothing is not an iteration. Its first
+           ;; slot can pass on a segment the loop itself would take, when the
+           ;; rival that owns it is a later slot of this same loop.
+           iteration (fn [r] (not-empty (into {} (map (fn [sub-parser] (sub-parser r))) sub-parsers)))]
+       (if collection?
+         (fn [^EDIStreamReader r]
+           (assert (= (.name (.getEventType r)) "START_SEGMENT"))
+           (loop [data []]
+             (if-some [m (when (starts? r) (iteration r))]
+               (recur (conj data m))
+               (when-some [v (not-empty data)]
+                 [k v]))))
+         (fn [^EDIStreamReader r]
+           (assert (= (.name (.getEventType r)) "START_SEGMENT"))
+           (when-some [m (when (starts? r) (iteration r))]
+             [k m]))))
+     (assert false)
+     #_(fn [r] nil))))
 
 (defn make-transaction-parser [sch]
-  (let [sub-parsers (into []
-                          (map (fn [[k meta sub-schema]]
-                                 (case (next-map-type sub-schema)
-                                   :segment (make-segment-parser k meta sub-schema)
-                                   :loop (make-loop-parser k meta sub-schema))))
-                          (m/children sch))]
+  (let [sub-parsers (slot-parsers (m/children sch) [])]
     (fn [r]
       (into {}
             (map (fn [sub-parser]
@@ -643,12 +885,7 @@
             sub-parsers))))
 
 (defn make-transactions-parser [k meta sch]
-  (let [sub-parsers (into []
-                          (map (fn [[k meta sub-schema]]
-                                 (case (next-map-type sub-schema)
-                                   :segment (make-segment-parser k meta sub-schema)
-                                   :loop (make-loop-parser k meta sub-schema))))
-                          (-> sch m/children first m/children))]
+  (let [sub-parsers (slot-parsers (-> sch m/children first m/children) [])]
     (fn [r]
       ;(prn tag)
       (assert (= (.name (.getEventType r)) "START_TRANSACTION"))
