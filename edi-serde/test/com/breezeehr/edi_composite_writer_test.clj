@@ -199,3 +199,29 @@
              (written untruncated stc {:e01 {:c01 "R4" :c02 "18842-5"}})))
       (is (= "STC*R4:18842-5::LOI*"
              (written untruncated stc {:e01 {:c01 "R4" :c02 "18842-5" :c04 "LOI"}}))))))
+
+(deftest decimal-and-an-wire-format
+  (let [body [:map {:type :segment :segment-id "NTE"}
+              [:number {:sequence 1} 'decimal?]
+              [:text {:sequence 2} :string]
+              [:comp {:sequence 3}
+               [:map {:type :composite}
+                [:number {:sequence 1} 'decimal?]
+                [:text {:sequence 2} :string]
+                [:end {:sequence 3} :string]]]
+              [:end {:sequence 4} :string]]]
+    (doseq [[number expected] [[1E+2M "100"] [1E-7M "0.0000001"]
+                               [-1E+2M "-100"] [0M "0"] [1.20M "1.20"]]]
+      (is (= (str "NTE*" expected "*  A  B*" expected ":  X:Y*Z")
+             (written body {:number number :text "  A  B   "
+                            :comp {:number number :text "  X   " :end "Y"}
+                            :end "Z"}))))
+    (is (= "NTE***::Y*Z"
+           (written body {:text "   " :comp {:text "   " :end "Y"} :end "Z"})))
+    (is (= "NTE**A\t*::Y*Z"
+           (written body {:text "A\t " :comp {:end "Y"} :end "Z"}))))
+  (is (= "NTE*A  *Z"
+         (written [:map {:type :segment :segment-id "NTE"}
+                   [:id {:sequence 1} [:string {:type "ID"}]]
+                   [:end {:sequence 2} :string]]
+                  {:id "A  " :end "Z"}))))

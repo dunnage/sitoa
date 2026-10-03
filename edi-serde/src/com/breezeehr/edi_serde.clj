@@ -1,7 +1,9 @@
 (ns com.breezeehr.edi-serde
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
+            [clojure.string :as str]
             [malli.core :as m]
+            [malli.util :as mu]
             [malli.experimental.time])
   (:import (io.xlate.edi.schema Schema SchemaFactory)
            (io.xlate.edi.stream EDIInputFactory EDIStreamConstants EDIStreamConstants$Standards EDIStreamReader EDIOutputFactory EDIStreamWriter Location)
@@ -151,6 +153,14 @@
                (when-not (.isEmpty s)
                  (bigdec s)))))
 
+(defn- an-text [sch s]
+  ;; Generated AN schemas are plain :string; ID schemas carry :type "ID".
+  ;; Suppress ASCII spaces only, preserving leading space and other characters.
+  (if (or (:preserve-padding (m/properties sch))
+          (= "ID" (:type (m/properties (m/deref sch)))))
+    s
+    (str/replace s #" +\z" "")))
+
 (defn make-primitive-unparser [sch]
   (case (->  sch m/deref m/type)
     bytes? (fn [^EDIStreamWriter w payload]
@@ -165,7 +175,7 @@
               (.writeEmptyElement w)))
     :string (fn [w ^String s]
               (if s
-                (.writeElement w s)
+                (.writeElement w (an-text sch s))
                 (.writeEmptyElement w)))
     :time/local-date (if-some [formats (-> sch m/properties :formats)]
                        (let [fmt (DateTimeFormatter/ofPattern (first formats))]
@@ -191,9 +201,9 @@
              (if x
                (.writeElement w (format fmt x))
                (.writeEmptyElement w))))
-    decimal? (fn [w ^String s]
+    decimal? (fn [w ^java.math.BigDecimal s]
                (if s
-                 (.writeElement w (str s))
+                 (.writeElement w (.toPlainString s))
                  (.writeEmptyElement w)))))
 
 (defn make-primitive-component-unparser [sch]
@@ -204,7 +214,7 @@
               (.writeEmptyComponent w)))
     :string (fn [w ^String s]
               (if s
-                (.writeComponent w s)
+                (.writeComponent w (an-text sch s))
                 (.writeEmptyComponent w)))
     :time/local-date (if-some [format (-> sch m/properties :format)]
                        (fn [w ^LocalDate s]
@@ -231,9 +241,9 @@
              (if x
                (.writeComponent w (format fmt x))
                (.writeEmptyComponent w))))
-    decimal? (fn [w ^String s]
+    decimal? (fn [w ^java.math.BigDecimal s]
                (if s
-                 (.writeComponent w (str s))
+                 (.writeComponent w (.toPlainString s))
                  (.writeEmptyComponent w)))))
 
 (defn make-element-parser [k meta sch from-pos]
@@ -790,7 +800,10 @@
           (.writeEmptyElement w))))))
 
 (defn make-element-unparser [k meta sub-schema epos]
-  (let [unparser (make-primitive-unparser sub-schema)]
+  (let [unparser (make-primitive-unparser
+                   (if (:preserve-padding meta)
+                     (mu/update-properties sub-schema assoc :preserve-padding true)
+                     sub-schema))]
     unparser))
 
 (defn empty-element-unparser [cnt]
@@ -816,7 +829,11 @@
                                             (conj
                                              (case (next-map-type sub-schema)
                                                :composite [k (make-composite-unparser k meta sub-schema epos)]
-                                               nil [k (make-element-unparser k meta sub-schema epos)]))))))
+                                               nil [k (make-element-unparser k
+                                                     (cond-> meta
+                                                       (= "ISA" (:segment-id (m/properties nm)))
+                                                       (assoc :preserve-padding true))
+                                                     sub-schema epos)]))))))
                             (m/children nm))
         tag (-> nm m/properties :segment-id)
         binary-keys (bin-keys nm)
