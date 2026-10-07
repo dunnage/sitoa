@@ -1,6 +1,6 @@
 {:paths ["src" "dev-resources"]
  :deps  {org.clojure/clojure {:mvn/version "1.12.6"}
-         metosin/malli       {:mvn/version "0.16.4"}
+         metosin/malli       {:mvn/version "0.20.2"}
          net.cgrand/xforms   {:mvn/version "0.19.4"}
          io.xlate/staedi     {:mvn/version "1.22.0"}
          techascent/tech.ml.dataset {:mvn/version "7.060"}}
