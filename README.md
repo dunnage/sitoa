@@ -8,6 +8,7 @@ Malli XML bindings
 | `xml-primitives` | `io.github.dunnage.sitoa/xml-primitives` | XML Schema built-in types as malli schemas |
 | `bootstrapped-schema` | `io.github.dunnage.sitoa/bootstrapped-schema` | Generates malli schemas, or Clojure namespaces, from XSD |
 | `serde` | `io.github.dunnage.sitoa/serde` | Streaming XML parser and unparser driven by those schemas |
+| `edi-serde` | `io.github.dunnage.sitoa/edi-serde` | Schema-driven X12 parsing and writing with malli and StAEDI |
 
 ```clojure
 {:deps {io.github.dunnage.sitoa/serde {:mvn/version "0.1.0"}}}
@@ -19,12 +20,15 @@ module directory. The Maven and git coordinates share the same lib names.
 `serde` brings `xml-primitives` but not `bootstrapped-schema`. XSD generation
 (XSOM, JAXB) is only needed when you generate schemas, so add
 `bootstrapped-schema` where you do that, for example under a build alias.
-`edi-serde` is released separately as `com.breezeehr/edi-serde`.
+`edi-serde` stands alone. Its X12 helpers in `support/`, which use
+tech.ml.dataset, are for tests and REPL work (`-M:support`) and are not in the
+jar.
 
 ## Releasing
 
 From the repository root, `build.clj` releases `xml-primitives`,
-`bootstrapped-schema` and `serde` at one version, in dependency order. Each
+`bootstrapped-schema`, `serde` and `edi-serde` at one version, in dependency
+order. Each
 module refers to its siblings with `:local/root`. Each pom names them at the
 release version instead.
 

@@ -1,7 +1,7 @@
 name: Release
 
 # Push a tag v<version> matching (def version ...) in build.clj to test and
-# deploy xml-primitives, bootstrapped-schema and serde to Clojars.
+# deploy xml-primitives, bootstrapped-schema, serde and edi-serde to Clojars.
 # Needs the repository secrets CLOJARS_USERNAME and CLOJARS_PASSWORD (a Clojars
 # deploy token with access to the io.github.dunnage.sitoa group).
 
@@ -37,7 +37,7 @@ jobs:
           fi
       - name: Test the released modules
         run: |
-          for module in xml-primitives bootstrapped-schema serde; do
+          for module in xml-primitives bootstrapped-schema serde edi-serde; do
             (cd "$module" && clojure -Sdeps '{:deps {io.github.cognitect-labs/test-runner {:git/tag "v0.5.1" :git/sha "dfb30dd"}}}' -M:test -m cognitect.test-runner)
           done
       - name: Deploy to Clojars

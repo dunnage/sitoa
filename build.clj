@@ -1,5 +1,5 @@
 (ns build
-  "Releases sitoa's library modules to Clojars as io.github.dunnage.sitoa/<module>,
+  "Releases sitoa's modules to Clojars as io.github.dunnage.sitoa/<module>,
   all at one version, in dependency order. Run from the repository root:
 
     clojure -T:build jars      target/<module>-<version>.jar and pom for each
@@ -12,7 +12,7 @@
 
   Within the repository the modules refer to each other with :local/root,
   which a pom cannot express. Each pom names its siblings at this release's
-  version instead. edi-serde is released separately (com.breezeehr/edi-serde)."
+  version instead."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.tools.build.api :as b]
@@ -29,7 +29,9 @@
    {:module "bootstrapped-schema"
     :description "sitoa: generate malli schemas (and Clojure namespaces) from XSD, for sitoa's XML serde."}
    {:module "serde"
-    :description "sitoa: streaming XML parser and unparser driven by malli schemas."}])
+    :description "sitoa: streaming XML parser and unparser driven by malli schemas."}
+   {:module "edi-serde"
+    :description "sitoa: schema-driven X12 parsing and writing with malli and StAEDI."}])
 
 (defn- lib [module] (symbol group module))
 
