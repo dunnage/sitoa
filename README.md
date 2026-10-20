@@ -37,3 +37,10 @@ CLOJARS_USERNAME=<username> CLOJARS_PASSWORD=<deploy token> clojure -T:build dep
 Set `version` in `build.clj` first. `deploy` refuses to run with uncommitted
 changes. It needs a Clojars account with the `io.github.dunnage.sitoa` group.
 Tag the released commit `v<version>`.
+
+From GitHub Actions, pushing a tag `v<version>` that matches `build.clj`
+runs `.github/workflows/release.yml`. That tests the released modules and
+deploys them. It reads the repository secrets `CLOJARS_USERNAME` and
+`CLOJARS_PASSWORD`, the latter a Clojars deploy token.
+`.github/workflows/ci.yml` tests every module on JDK 21 and 25 on each push to
+`main` and on each pull request.
