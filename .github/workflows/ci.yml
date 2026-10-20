@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.module }} (JDK ${{ matrix.java }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [xml-primitives, bootstrapped-schema, serde, edi-serde]
+        java: ['21', '25']
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+      - uses: DeLaGuardo/setup-clojure@13.7.0
+        with:
+          cli: 1.12.2.1565
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.deps.clj
+          key: deps-${{ runner.os }}-${{ matrix.module }}-${{ hashFiles('**/deps.edn') }}
+          restore-keys: deps-${{ runner.os }}-${{ matrix.module }}-
+      - name: Run tests
+        run: clojure -Sdeps '{:deps {io.github.cognitect-labs/test-runner {:git/tag "v0.5.1" :git/sha "dfb30dd"}}}' -M:test -m cognitect.test-runner
+
+  jars:
+    name: release jars
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: DeLaGuardo/setup-clojure@13.7.0
+        with:
+          cli: 1.12.2.1565
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.deps.clj
+          key: deps-${{ runner.os }}-build-${{ hashFiles('**/deps.edn') }}
+          restore-keys: deps-${{ runner.os }}-build-
+      - name: Build the jars and poms
+        run: clojure -T:build jars

@@ -1,0 +1,9 @@
+;; The modules are separate projects (see each directory's deps.edn). This root
+;; file only carries the release tooling:
+;;
+;;   clojure -T:build jars | install | deploy      (see build.clj)
+{:paths []
+ :aliases
+ {:build {:deps       {io.github.clojure/tools.build {:git/tag "v0.10.14" :git/sha "9d08b2a"}
+                       slipset/deps-deploy           {:mvn/version "0.2.5"}}
+          :ns-default build}}}

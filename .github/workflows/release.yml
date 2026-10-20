@@ -1,0 +1,52 @@
+name: Release
+
+# Push a tag v<version> matching (def version ...) in build.clj to test and
+# deploy xml-primitives, bootstrapped-schema, serde and edi-serde to Clojars.
+# Needs the repository secrets CLOJARS_USERNAME and CLOJARS_PASSWORD (a Clojars
+# deploy token with access to the io.github.dunnage.sitoa group).
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: DeLaGuardo/setup-clojure@13.7.0
+        with:
+          cli: 1.12.2.1565
+      - name: Check the tag matches build.clj
+        run: |
+          version=$(sed -n 's/^(def version "\(.*\)")$/\1/p' build.clj)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match version \"$version\" in build.clj"
+            exit 1
+          fi
+      - name: Test the released modules
+        run: |
+          for module in xml-primitives bootstrapped-schema serde edi-serde; do
+            (cd "$module" && clojure -Sdeps '{:deps {io.github.cognitect-labs/test-runner {:git/tag "v0.5.1" :git/sha "dfb30dd"}}}' -M:test -m cognitect.test-runner)
+          done
+      - name: Deploy to Clojars
+        env:
+          CLOJARS_USERNAME: ${{ secrets.CLOJARS_USERNAME }}
+          CLOJARS_PASSWORD: ${{ secrets.CLOJARS_PASSWORD }}
+        run: |
+          if [ -z "$CLOJARS_USERNAME" ] || [ -z "$CLOJARS_PASSWORD" ]; then
+            echo "::error::Set the CLOJARS_USERNAME and CLOJARS_PASSWORD repository secrets"
+            exit 1
+          fi
+          clojure -T:build deploy
