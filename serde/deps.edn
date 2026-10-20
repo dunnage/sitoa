@@ -3,16 +3,18 @@
          metosin/malli                               {:mvn/version "0.20.2"}
          io.pedestal/pedestal.log                    {:mvn/version "0.5.10"},
          com.gfredericks/test.chuck                  {:mvn/version "0.2.13"}
-         io.github.dunnage.sitoa/bootstrapped-schema {:local/root "../bootstrapped-schema"
-                                                      :deps/root  "bootstrapped-schema"}
          io.github.dunnage.sitoa/xml-primitives      {:local/root "../xml-primitives"
                                                       :deps/root  "xml-primitives"}
-         net.cgrand/xforms                           {:mvn/version "0.19.4"}}
+         net.cgrand/xforms                           {:mvn/version "0.19.4"}
+         ;; the unparser's IndentingXMLStreamWriter; it used to arrive only
+         ;; through bootstrapped-schema's jaxb-runtime
+         org.glassfish.jaxb/txw2                     {:mvn/version "4.0.5"}}
  :aliases
- {:build {:deps       {io.github.seancorfield/build-clj
-                       {:git/tag "v0.6.3" :git/sha "9b8e09b"}}
-          :ns-default build}
-  :dev   {:extra-paths ["dev-resources"]
+ {:dev   {:extra-paths ["dev-resources"]
           :extra-deps  {ch.qos.logback/logback-classic {:mvn/version "1.4.3"}}}
+  ;; bootstrapped-schema (XSOM/JAXB) generates schemas; serde's runtime never
+  ;; loads it, so only the tests that build schemas from XSD bring it in
   :test  {:extra-paths ["test"]
-          :extra-deps  {org.clojure/test.check {:mvn/version "1.1.1"}}}}}
+          :extra-deps  {org.clojure/test.check                      {:mvn/version "1.1.1"}
+                        io.github.dunnage.sitoa/bootstrapped-schema {:local/root "../bootstrapped-schema"
+                                                                     :deps/root  "bootstrapped-schema"}}}}}

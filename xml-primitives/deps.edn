@@ -1,11 +1,7 @@
 {:paths ["src" "resources"]
  :deps  {org.clojure/clojure                 {:mvn/version "1.12.6"}
          metosin/malli                       {:mvn/version "0.20.2"}
-         io.github.Breezeemr/malli-java-time {:sha "c9a03b115f7da61d483a90a882d7e0e353af15c6"}
          com.gfredericks/test.chuck          {:mvn/version "0.2.13"}}
  :aliases
- {:build {:deps       {io.github.seancorfield/build-clj
-                       {:git/tag "v0.6.3" :git/sha "9b8e09b"}}
-          :ns-default build}
-  :test  {:extra-paths ["test"]
+ {:test  {:extra-paths ["test"]
           :extra-deps  {org.clojure/test.check {:mvn/version "1.1.1"}}}}}

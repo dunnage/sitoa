@@ -3,10 +3,8 @@
             [clojure.test.check.generators :as gen]
             [malli.transform :as mt]
             [malli.util :as mu]
-            [com.breezeehr.malli-java-time :as mjt]
             [malli.experimental.time]
-            malli.experimental.time.generator
-            com.breezeehr.java-time-printing)
+            malli.experimental.time.generator)
   (:import (java.time LocalDateTime LocalDate LocalTime OffsetDateTime ZoneId ZoneOffset)))
 
 (defn -string->bigdec [x]

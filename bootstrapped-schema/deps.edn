@@ -11,9 +11,6 @@
                                                  :deps/root  "xml-primitives"}
          }
  :aliases
- {:build {:deps       {io.github.seancorfield/build-clj
-                       {:git/tag "v0.6.3" :git/sha "9b8e09b"}}
-          :ns-default build}
-  :dev   {:extra-paths ["dev-resources"]}
+ {:dev   {:extra-paths ["dev-resources"]}
   :test  {:extra-paths ["test"]
           :extra-deps  {org.clojure/test.check {:mvn/version "1.1.1"}}}}}
