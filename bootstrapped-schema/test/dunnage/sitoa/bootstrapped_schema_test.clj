@@ -1,10 +1,12 @@
 (ns dunnage.sitoa.bootstrapped-schema-test
   (:require [clojure.test :refer :all]
+            [clojure.string :as str]
             [dunnage.sitoa.bootstrapped-schema :as bs
              :refer [xsd->schema xsd->registry serialize-schema serialize-registry
                      raw-xsd->schema trim-registry-for-top-types
                      leading-tag-dispatch keywordize-leading-tag
-                     or->multi or->multi-keys]]
+                     or->multi or->multi-keys
+                     parse-xsd value-form->seq-form derive-seq-registry]]
             [malli.core :as m]
             [malli.util :as mu]
             [malli.transform :as mt]
@@ -308,6 +310,72 @@
       (is (not (contains? registry :org.w3.www.2001.XMLSchema/anyType))))
     (testing "the cyclic registry resolves into a schema"
       (is (some? (xsd->schema {:default-ns "xsd"} (xsd "XMLSchema.xsd")))))))
+(deftest value-form->seq-form-test
+  (let [registry {:t/Group [:map {:closed true} [:A {} :string]]
+                  :t/Color [:enum {} "red" "green"]}
+        tuple-a  [:tuple {} [:enum :A] :string]
+        tuple-b  [:tuple {} [:enum :B] :string]]
+    (testing "minOccurs=0 arms and content hoist :?"
+      (is (= [:? [:alt [:? tuple-a] tuple-b]]
+             (value-form->seq-form registry
+                                   [:or {:xml/min 0}
+                                    [:tuple {:xml/min 0} [:enum :A] :string]
+                                    tuple-b]))))
+    (testing "repeated arms map back onto :+ :* :repeat"
+      (is (= [:alt [:+ tuple-a] [:* tuple-a] [:repeat {:min 2, :max 4} tuple-a]]
+             (value-form->seq-form registry
+                                   [:or
+                                    [:sequential {:min 1} tuple-a]
+                                    [:sequential {:min 0} tuple-a]
+                                    [:sequential {:min 2 :max 4} tuple-a]]))))
+    (testing "a union :or of simple types stays untouched"
+      (is (= [:or :string [:ref :t/Color]]
+             (value-form->seq-form registry [:or :string [:ref :t/Color]]))))
+    (testing "refs to element content rename to the -seq form"
+      (is (= [:ref :t/Group-seq]
+             (value-form->seq-form registry [:ref :t/Group]))))
+    (testing "entry maps gain :xml/in-seq-ex, nested group maps do not"
+      (is (= [:map {:closed true :xml/in-seq-ex true} [:A {} :string]]
+             (value-form->seq-form registry [:map {:closed true} [:A {} :string]])))
+      (is (= [:merge {}
+              [:map {:closed true :xml/in-seq-ex true} [:A {} :string]]
+              [:map {:closed true :xml/group true} [:B {} :string]]]
+             (value-form->seq-form registry
+                                   [:merge {}
+                                    [:map {:closed true} [:A {} :string]]
+                                    [:map {:closed true :xml/group true} [:B {} :string]]]))))
+    (testing "value-wrapped content converts under :xml/value"
+      (is (= [:map {:closed true :xml/value-wrapped true}
+              [:id {:xml/attr true :optional true} :string]
+              [:xml/value {} [:? [:alt tuple-a tuple-b]]]]
+             (value-form->seq-form registry
+                                   [:map {:closed true :xml/value-wrapped true}
+                                    [:id {:xml/attr true :optional true} :string]
+                                    [:xml/value {} [:alt {:xml/min 0} tuple-a tuple-b]]]))))))
+
+(defn- split-dual-registry
+  "Split a dual-mode registry into its value half and its *-seq half,
+  excluding the xml-primitives base entries."
+  [registry]
+  (let [base (set (keys xml-primitives/xmlschema-registry))
+        own  (into {} (remove (comp base key)) registry)
+        seq-keys (into #{}
+                       (filter (fn [k]
+                                 (and (str/ends-with? (name k) "-seq")
+                                      (contains? own (keyword (namespace k)
+                                                              (subs (name k) 0 (- (count (name k)) 4)))))))
+                       (keys own))]
+    {:seq-part (select-keys own seq-keys)
+     :value-part (apply dissoc own seq-keys)}))
+
+(deftest derive-seq-registry-matches-emitted-test
+  (doseq [[default-ns resource] [["fop" "fop.xsd"]
+                                 ["junit" "JUnit.xsd"]]]
+    (testing resource
+      (let [registry (xsd->registry {:default-ns default-ns} (parse-xsd (io/resource resource)))
+            {:keys [seq-part value-part]} (split-dual-registry registry)]
+        (is (pos? (count seq-part)))
+        (is (= seq-part (derive-seq-registry value-part)))))))
 
 (comment
   (set! *print-namespace-maps* false)
